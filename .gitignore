@@ -1,5 +1,22 @@
+# Virtual Environment
 .venv/
+
+# Dataset
 data/
+
+# Python
 __pycache__/
+*.py[cod]
+
+# Jupyter
 .ipynb_checkpoints/
-*.pyc
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+
+# OS
+.DS_Store
+Thumbs.db
