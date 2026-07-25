@@ -24,6 +24,19 @@ def load_games():
 
     return games
 
+def load_train():
+
+    train = pd.read_csv("data/split/train.csv")
+
+    return train
+
+
+def load_test():
+
+    test = pd.read_csv("data/split/test.csv")
+
+    return test
+
 def preprocess(gamesgenres):
 
     # 필요한 컬럼만 선택
