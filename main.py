@@ -2,47 +2,69 @@ from models.content_base import ContentBasedRecommender
 from preprocessing import load_games, load_train, preprocess
 
 
+def resolve_name_to_appid(meta, name):
+    """
+    사용자가 입력한 게임 '이름'을 app_id로 변환.
+    동명이인 게임이 있으면 사용자에게 선택하게 함.
+    """
+    candidates = meta[meta["Name"] == name]
+
+    if len(candidates) == 0:
+        print(f"'{name}' 게임을 찾을 수 없습니다.")
+        return None
+
+    if len(candidates) == 1:
+        return candidates["app_id"].iloc[0]
+
+    # 이름이 중복되는 경우 -> 사용자에게 AppID 선택하게 함
+    print(f"\n'{name}'과 일치하는 게임이 여러 개 있습니다. 선택해주세요:")
+    candidates = candidates.reset_index(drop=True)
+    for i, row in candidates.iterrows():
+        print(f"  [{i}] app_id: {row['app_id']} - {row['Name']}")
+
+    while True:
+        choice = input("번호를 입력하세요: ").strip()
+        if choice.isdigit() and int(choice) < len(candidates):
+            return candidates.iloc[int(choice)]["app_id"]
+        print("올바른 번호를 입력해주세요.")
+
+
 def main():
 
-    # 1. 데이터 불러오기
-    train_games = load_train()
+    games = load_games()
+    meta = preprocess(games)   # 게임 단위로 dedup 된 meta (AppID 기준)
 
-    # 2. 데이터 전처리
-    meta = preprocess(train_games)
-
-    # 3. 추천 모델 생성
     recommender = ContentBasedRecommender()
-
-    # 4. 모델 학습
     recommender.fit(meta)
 
-    # 5. 사용자 입력
-    # 5. 사용자 입력
     print("Steam Game Recommendation System")
     print("플레이했던 게임을 하나씩 입력하세요.")
     print("(입력을 끝내려면 그냥 Enter를 누르세요.)")
 
     played_games = []
-
     while True:
         game = input("게임 이름: ").strip()
-
         if game == "":
             break
-
         played_games.append(game)
 
     if len(played_games) == 0:
         print("최소 1개의 게임을 입력해야 합니다.")
         return
 
-    # 6. 추천 실행
-    result = recommender.recommend(
-        game_list=played_games,
-        top_n=10
-    )
+    # 이름 -> AppID 변환 (여기서 중복 처리까지 완료됨)
+    played_app_ids = []
+    for game_name in played_games:
+        app_id = resolve_name_to_appid(meta, game_name)
+        if app_id is not None:
+            played_app_ids.append(app_id)
 
-    # 7. 결과 출력
+    if len(played_app_ids) == 0:
+        print("유효한 게임이 없습니다.")
+        return
+
+    # recommend()는 오직 AppID 리스트만 받음
+    result = recommender.recommend(app_id_list=played_app_ids, top_n=10)
     print(result)
 
 

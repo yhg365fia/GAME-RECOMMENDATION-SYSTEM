@@ -10,6 +10,8 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - Cosine Similarity 기반 추천
 - Multi-Game Recommendation
 - Recommendation Evaluation Dataset 구축
+- AppID 기반 안정적인 게임 식별 구조 설계
+- 데이터 로딩 캐싱(Parquet)을 통한 성능 최적화
 - 프로젝트 모듈화 및 객체지향 설계
 
 를 완료하였습니다.
@@ -28,7 +30,9 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - TF-IDF Vectorization
 - Cosine Similarity
 - Multi-Game Recommendation
+- AppID 기반 게임 식별 및 동명이인 게임 선택 기능
 - Recommendation Evaluation Dataset
+- 데이터 로딩 캐싱 (Parquet)
 - 프로젝트 구조 모듈화
 
 ---
@@ -54,6 +58,7 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 
 - Pandas
 - NumPy
+- PyArrow (Parquet 캐싱)
 
 ## Machine Learning
 
@@ -88,16 +93,21 @@ Game-Recommendation-System/
 │
 ├── data/
 │   ├── raw/
-│   └── split/
-│       ├── train.csv
-│       └── test.csv
+│   ├── split/
+│   │   ├── train.csv
+│   │   └── test.csv
+│   └── cache/              # 전처리/로딩 결과 캐싱 (Parquet)
+│       ├── games.parquet
+│       ├── train.parquet
+│       └── test.parquet
 │
 ├── docs/
 │   ├── Day01.md
 │   ├── Day02.md
 │   ├── Day03.md
 │   ├── Day04.md
-│   └── Day05.md
+│   ├── Day05.md
+│   └── Day06.md
 │
 ├── models/
 │   └── content_base.py
@@ -125,6 +135,9 @@ Game-Recommendation-System/
 Raw Steam Dataset
       │
       ▼
+Data Loading (with Parquet Cache)
+      │
+      ▼
 Data Validation
       │
       ▼
@@ -135,7 +148,7 @@ User-based Train/Test Split
  Train           Test
       │
       ▼
-Data Preprocessing
+Data Preprocessing (Name Dedup, AppID 기준 정리)
       │
       ▼
 Combined Features
@@ -144,10 +157,13 @@ Combined Features
 TF-IDF Vectorization
       │
       ▼
-Content-Based Recommendation
+Name → AppID → Index 변환
       │
       ▼
-Top-N Recommendation
+Content-Based Recommendation (Cosine Similarity)
+      │
+      ▼
+Top-N Recommendation (AppID 기준 중복 제거)
       │
       ▼
 Recommendation Evaluation
@@ -155,17 +171,45 @@ Recommendation Evaluation
 
 ---
 
+# 🧩 Recommendation Identifier Flow
+
+콘텐츠 기반 추천에서 게임을 식별하고 유사도를 계산하는 내부 흐름은 다음과 같습니다.
+
+```text
+Game Name (사용자 입력)
+      │  동명이인 게임 존재 시 후보 목록 출력 후 선택
+      ▼
+AppID (고유 식별자)
+      │  game_to_idx 딕셔너리로 조회
+      ▼
+Index (tfidf_matrix 상의 위치)
+      │
+      ▼
+TF-IDF Vector
+      │
+      ▼
+Cosine Similarity
+      │
+      ▼
+추천 Index → AppID → Game Name
+```
+
+> Game Name은 중복될 수 있지만 AppID는 고유하므로, 내부 로직은 전부 **AppID 기준**으로 동작하도록 설계하였습니다.
+
+---
+
 # ✅ Implemented Features
 
-- Steam Metadata Loading
+- Steam Metadata Loading (with Parquet Caching)
 - Data Validation
 - User-based Train/Test Split
-- Data Preprocessing
+- Data Preprocessing (Name/AppID 기준 중복 제거)
 - Combined Features Generation
 - TF-IDF Vectorization
 - Cosine Similarity Recommendation
 - Multi-Game Recommendation
-- Duplicate Recommendation Handling
+- AppID 기반 게임 식별 및 동명이인 게임 선택 기능
+- Duplicate Recommendation Handling (AppID 기준)
 - Recommendation Evaluation Dataset
 - Object-Oriented Recommendation Model
 - Modular Project Structure
@@ -179,6 +223,7 @@ Recommendation Evaluation
 ### Data Processing
 
 - [x] Steam Metadata Loading
+- [x] Parquet 기반 데이터 캐싱
 - [x] Data Validation
 - [x] User-based Train/Test Split
 - [x] Data Preprocessing
@@ -191,6 +236,8 @@ Recommendation Evaluation
 - [x] TF-IDF Vectorization
 - [x] Cosine Similarity
 - [x] Multi-Game Recommendation
+- [x] AppID 기반 게임 식별 구조 (Name → AppID → Index)
+- [x] 동명이인 게임 선택 기능
 - [x] Duplicate Recommendation Handling
 
 ### Evaluation
@@ -206,6 +253,7 @@ Recommendation Evaluation
 - [x] Function Modularization
 - [x] Object-Oriented Design
 - [x] Project Structure Refactoring
+- [x] Data Loading Caching Strategy
 
 ---
 
@@ -251,6 +299,7 @@ Recommendation Evaluation
 
 - Execution Time
 - Memory Usage
+- Cache Hit / Miss (Parquet 캐싱 적용 후 로딩 속도 비교)
 
 ---
 
@@ -259,12 +308,14 @@ Recommendation Evaluation
 | Module | Status |
 | :--- | :---: |
 | Data Loading | ✅ |
+| Data Caching (Parquet) | ✅ |
 | Data Validation | ✅ |
 | Train/Test Split | ✅ |
 | Data Preprocessing | ✅ |
 | TF-IDF Vectorization | ✅ |
 | Content-Based Recommendation | ✅ |
 | Multi-Game Recommendation | ✅ |
+| AppID 기반 식별 구조 | ✅ |
 | Evaluation Dataset | ✅ |
 | Precision@K | 🚧 |
 | Recall@K | 🚧 |
@@ -278,16 +329,18 @@ Recommendation Evaluation
 
 # 📌 Project Status
 
-**Current Version:** `V1.1 - Content-Based Recommendation`
+**Current Version:** `V1.2 - Content-Based Recommendation (AppID 기반 리팩토링 & 캐싱 적용)`
 
 ### Completed
 
 - Steam Metadata Preprocessing
+- Parquet 기반 데이터 로딩 캐싱
 - User-based Train/Test Split
 - Recommendation Evaluation Dataset
 - Combined Features Generation
 - TF-IDF Vectorization
 - Multi-Game Recommendation
+- AppID 기반 게임 식별 및 동명이인 처리 구조
 - Cosine Similarity Recommendation
 - Object-Oriented Recommendation Model
 - Project Modularization

@@ -1,6 +1,8 @@
+import numpy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
+import numpy as np
 
 
 class ContentBasedRecommender:
@@ -23,33 +25,31 @@ class ContentBasedRecommender:
             self.meta["combined_features"]
         )
 
-        # 게임 이름 -> 인덱스 딕셔너리
-        self.game_to_idx = (
+        # 게임 app_id -> 인덱스 딕셔너리
+        self.appid_to_idx = (
             self.meta.reset_index()
-                    .set_index("Name")["index"]
+                    .set_index("app_id")["index"]
                     .to_dict()
-    )
-    def recommend(self, game_list, top_n=10):
+        )
+
+    def recommend(self, app_id_list, top_n=10):
+        """
+        app_id_list: 사용자가 플레이한 게임들의 app_id 리스트
+        """
 
         similarity_list = []
         played_indices = []
 
         # 입력한 게임마다 유사도 계산
-        for game_name in game_list:
+        for app_id in app_id_list:
 
-            # 같은 이름의 게임 찾기
-            candidates = self.meta[self.meta["Name"] == game_name]
-
-            if len(candidates) == 0:
-                print(f"'{game_name}' 게임을 찾을 수 없습니다.")
+            if app_id not in self.appid_to_idx:
+                print(f"app_id '{app_id}' 게임을 찾을 수 없습니다.")
                 continue
 
-            # 같은 이름의 게임이 여러 개면 첫 번째 사용
-            idx = candidates.index[0]
-
+            idx = self.appid_to_idx[app_id]
             played_indices.append(idx)
 
-            # 해당 게임과 모든 게임의 코사인 유사도
             sim_scores = cosine_similarity(
                 self.tfidf_matrix[idx],
                 self.tfidf_matrix
@@ -57,19 +57,15 @@ class ContentBasedRecommender:
 
             similarity_list.append(sim_scores)
 
-        # 입력한 게임을 하나도 찾지 못한 경우
         if len(similarity_list) == 0:
             print("입력한 게임을 찾을 수 없습니다.")
             return
 
-        # 각 게임의 유사도를 평균
         mean_scores = np.mean(similarity_list, axis=0)
-
-        # 유사도 높은 순 정렬
         sim_indices = mean_scores.argsort()[::-1]
 
         result = []
-        used_names = set()
+        used_appids = set()
 
         for i in sim_indices:
 
@@ -77,17 +73,12 @@ class ContentBasedRecommender:
             if i in played_indices:
                 continue
 
-            name = self.meta.iloc[i]["Name"]
+            app_id = self.meta.iloc[i]["app_id"]
 
-            # 같은 이름의 게임 중복 제거
-            if name in used_names:
-                continue
-
-            used_names.add(name)
 
             result.append({
-                "AppID": self.meta.iloc[i]["AppID"],
-                "Name": name,
+                "app_id": app_id,
+                "Name": self.meta.iloc[i]["Name"],
                 "Similarity": mean_scores[i]
             })
 
