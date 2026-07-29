@@ -109,6 +109,26 @@ def _load_with_cache(csv_path: str, cache_path: str) -> pd.DataFrame:
     return df
 
 
+
+def load_recommendations():
+    """
+    recommendations.csv 로딩 (Parquet 캐싱 적용)
+    """
+    cache_path = os.path.join(CACHE_DIR, "recommendations.parquet")
+
+    if os.path.exists(cache_path):
+        print("캐시에서 recommendations 데이터 불러오는 중...")
+        return pd.read_parquet(cache_path)
+
+    print("원본 CSV에서 recommendations 데이터 읽는 중...")
+    user_history = pd.read_csv("data/recommendations.csv")
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    user_history.to_parquet(cache_path)
+    print(f"캐시 저장 완료: {cache_path}")
+
+    return user_history
+
 def load_train():
     print("Loading train data...")
     return _load_with_cache(

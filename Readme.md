@@ -243,10 +243,10 @@ Cosine Similarity
 ### Evaluation
 
 - [x] Recommendation Evaluation Dataset
-- [ ] Precision@K
-- [ ] Recall@K
-- [ ] MAP
-- [ ] NDCG
+- [x] Precision@K
+- [x ] Recall@K
+- [x ] MAP
+- [x] NDCG
 
 ### Software Engineering
 
@@ -317,40 +317,38 @@ Cosine Similarity
 | Multi-Game Recommendation | ✅ |
 | AppID 기반 식별 구조 | ✅ |
 | Evaluation Dataset | ✅ |
-| Precision@K | 🚧 |
-| Recall@K | 🚧 |
+| Precision@K | ✅ |
+| Recall@K | ✅ |
+| NDCG | ✅ |
 | MAP | 🚧 |
-| NDCG | 🚧 |
 | Collaborative Filtering | 🚧 |
 | Hybrid Recommendation | 🚧 |
 | Deployment | 🚧 |
 
 ---
 
-# 📌 Project Status
+@@ Project Status
 
-**Current Version:** `V1.2 - Content-Based Recommendation (AppID 기반 리팩토링 & 캐싱 적용)`
+- **Current Version:** `V1.2 - Content-Based Recommendation (AppID 기반 리팩토링 & 캐싱 적용)`
++ **Current Version:** `V1.3 - Content-Based Recommendation Evaluation`
 
-### Completed
+@@ Completed
 
-- Steam Metadata Preprocessing
-- Parquet 기반 데이터 로딩 캐싱
-- User-based Train/Test Split
-- Recommendation Evaluation Dataset
-- Combined Features Generation
-- TF-IDF Vectorization
-- Multi-Game Recommendation
-- AppID 기반 게임 식별 및 동명이인 처리 구조
-- Cosine Similarity Recommendation
-- Object-Oriented Recommendation Model
-- Project Modularization
++ - Precision@K
++ - Recall@K
++ - NDCG@K
 
-### Next Milestone
+@@ Next Milestone
 
-➡️ Precision@K / Recall@K / MAP / NDCG
+- ➡️ MAP@K 구현
+-
+- ➡️ Collaborative Filtering
++ ➡️ User-Based Collaborative Filtering
++
++ ➡️ Item-Based Collaborative Filtering
++
++ ➡️ Matrix Factorization (SVD)
 
-➡️ Collaborative Filtering
+  ➡️ Hybrid Recommendation
 
-➡️ Hybrid Recommendation
-
-➡️ Web Service Deployment
+  ➡️ Web Service Deployment

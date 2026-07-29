@@ -1,6 +1,11 @@
 from models.content_base import ContentBasedRecommender
-from preprocessing import load_games, load_train, preprocess
+from preprocessing import load_games, load_recommendations, load_train, preprocess
+from evaluation import evaluate_pipeline
+import pandas as pd
 
+import os
+
+print(os.getcwd())
 
 def resolve_name_to_appid(meta, name):
     """
@@ -66,6 +71,27 @@ def main():
     # recommend()는 오직 AppID 리스트만 받음
     result = recommender.recommend(app_id_list=played_app_ids, top_n=10)
     print(result)
+
+    #평가 시스템 적용
+
+    user_history = load_recommendations()
+    valid_app_ids = set(meta["app_id"])
+
+    user_history = user_history[
+    user_history["app_id"].isin(valid_app_ids)
+]
+    
+    from evaluation import evaluate_pipeline
+
+    eval_df, summary = evaluate_pipeline(
+        recommender=recommender,
+        user_history=user_history,   # user_id, app_id 컬럼 포함
+        lower_bound=10,
+        upper_bound=78,
+        n_groups=4,
+        sample_per_group=100,
+        top_n=10
+        )
 
 
 if __name__ == "__main__":
