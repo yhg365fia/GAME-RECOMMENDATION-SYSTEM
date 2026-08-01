@@ -71,7 +71,7 @@ def main():
     # recommend()는 오직 AppID 리스트만 받음
     result = recommender.recommend(app_id_list=played_app_ids, top_n=10)
     print(result)
-
+    
     #평가 시스템 적용
 
     user_history = load_recommendations()
@@ -80,7 +80,7 @@ def main():
     user_history = user_history[
     user_history["app_id"].isin(valid_app_ids)
 ]
-    
+    """
     from evaluation import evaluate_pipeline
 
     eval_df, summary = evaluate_pipeline(
@@ -93,6 +93,6 @@ def main():
         top_n=10
         )
 
-
+    """
 if __name__ == "__main__":
     main()
