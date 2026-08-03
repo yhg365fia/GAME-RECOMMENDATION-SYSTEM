@@ -16,6 +16,7 @@ def build_user_review_groups(user_history, lower_bound=10, upper_bound=78,
     print(f"평가 대상 유저 수: {len(eligible_users):,}")
     print(eligible_users["n_games"].describe())
 
+
     if bins is None:
         bins = [9, 15, 25, 45, 78]
     if labels is None:
