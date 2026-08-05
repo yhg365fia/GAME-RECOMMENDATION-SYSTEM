@@ -282,7 +282,6 @@ Cosine Similarity
 - [x] Recall@K
 - [x] NDCG@K
 - [x] 정성적 실험 (단일 입력 / 장르 혼합 입력)
-- [ ] MAP@K
 - [ ] 장르 혼합 쏠림 현상 최소 검증 (단독 입력 비교)
 - [ ] Popularity Baseline 비교
 

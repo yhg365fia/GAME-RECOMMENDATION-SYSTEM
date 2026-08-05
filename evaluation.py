@@ -16,7 +16,6 @@ def build_user_review_groups(user_history, lower_bound=10, upper_bound=78,
     print(f"평가 대상 유저 수: {len(eligible_users):,}")
     print(eligible_users["n_games"].describe())
 
-
     if bins is None:
         bins = [9, 15, 25, 45, 78]
     if labels is None:
@@ -28,6 +27,7 @@ def build_user_review_groups(user_history, lower_bound=10, upper_bound=78,
 
     print(eligible_users["review_group"].value_counts().sort_index())
     return eligible_users
+
 
 def stratified_sample_users(user_counts, sample_per_group=100, random_state=42):
     """
@@ -45,18 +45,26 @@ def stratified_sample_users(user_counts, sample_per_group=100, random_state=42):
     print(sampled["review_group"].value_counts().sort_index())
     return sampled
 
-def evaluate_user(recommender, train_app_ids, test_app_ids, top_n=10):
+
+# ===== 변경 1: user_idx=None 파라미터 추가 =====
+def evaluate_user(recommender, train_app_ids, test_app_ids, top_n=10, user_idx=None):
     if len(train_app_ids) == 0 or len(test_app_ids) == 0:
         return None
 
-    result = recommender.recommend(app_id_list=train_app_ids, top_n=top_n)
+    # ===== 변경 2: exclude_user_idx=user_idx를 recommend() 호출에 추가 전달 =====
+    result = recommender.recommend(
+        app_id_list=train_app_ids,
+        top_n=top_n,
+        exclude_user_idx=user_idx,
+    )
     if result is None or len(result) == 0:
         return None
 
     recommended_ids = set(result["app_id"])
     test_ids = set(test_app_ids)
     hits = len(recommended_ids & test_ids)
-# NDCG@K 계산
+
+    # NDCG@K 계산
     dcg = 0.0
     for rank, app_id in enumerate(recommended_ids, start=1):
         relevance = 1 if app_id in test_ids else 0
@@ -67,24 +75,22 @@ def evaluate_user(recommender, train_app_ids, test_app_ids, top_n=10):
 
     ndcg = dcg / idcg if idcg > 0 else 0.0
 
-
-# &는 집합의 교집합
-# 추천한 게임 중 실제 사용자가 좋아한 게임의 개수
-
+    # &는 집합의 교집합
+    # 추천한 게임 중 실제 사용자가 좋아한 게임의 개수
     precision = hits / len(recommended_ids) if len(recommended_ids) > 0 else 0.0
     recall = hits / len(test_ids) if len(test_ids) > 0 else 0.0
 
-    return {"precision": precision, "recall": recall, "hits": hits,
+    return {
+        "precision": precision, "recall": recall, "hits": hits,
         "hit": 1 if hits > 0 else 0,
-        "ndcg": ndcg,          # ← 추가: 1개라도 맞으면 1, 아니면 0
-        "n_recommended": len(recommended_ids), "n_test": len(test_ids)}
-
-#리턴을 딕셔너리로!!
-
+        "ndcg": ndcg,
+        "n_recommended": len(recommended_ids), "n_test": len(test_ids),
+    }
 
 
-
-def run_evaluation(recommender, user_history, sampled_users, top_n=10, test_size=0.3, random_state=42):
+# ===== 변경 3: user_to_idx=None 파라미터 추가 =====
+def run_evaluation(recommender, user_history, sampled_users, user_to_idx=None,
+                    top_n=10, test_size=0.3, random_state=42):
     sampled_ids = set(sampled_users["user_id"])
     target_history = user_history[user_history["user_id"].isin(sampled_ids)]
 
@@ -98,7 +104,12 @@ def run_evaluation(recommender, user_history, sampled_users, top_n=10, test_size
             continue
 
         train_ids, test_ids = train_test_split(app_ids, test_size=test_size, random_state=random_state)
-        metrics = evaluate_user(recommender, train_ids, test_ids, top_n=top_n)
+
+        # ===== 변경 4: user_id를 interaction_matrix 상의 인덱스로 변환 =====
+        user_idx = user_to_idx.get(user_id) if user_to_idx is not None else None
+
+        # ===== 변경 5: user_idx를 evaluate_user에 전달 =====
+        metrics = evaluate_user(recommender, train_ids, test_ids, top_n=top_n, user_idx=user_idx)
 
         if metrics is None:
             skipped += 1
@@ -118,18 +129,6 @@ def run_evaluation(recommender, user_history, sampled_users, top_n=10, test_size
 def print_evaluation_report(eval_df, top_n=10):
     print(f"Precision@{top_n}: {eval_df['precision'].mean():.4f}")
     print(f"Recall@{top_n}:    {eval_df['recall'].mean():.4f}")
-
-    summary = (
-        eval_df.groupby("review_group", observed=True)
-        .agg(precision_mean=("precision","mean"), recall_mean=("recall","mean"), n_users=("user_id","count"))
-        .reset_index()
-    )
-    print(summary.to_string(index=False))
-    return summary
-
-def print_evaluation_report(eval_df, top_n=10):
-    print(f"Precision@{top_n}: {eval_df['precision'].mean():.4f}")
-    print(f"Recall@{top_n}:    {eval_df['recall'].mean():.4f}")
     print(f"Hit Rate@{top_n}:  {eval_df['hit'].mean():.4f}")
     print(f"NDCG@{top_n}:      {eval_df['ndcg'].mean():.4f}")
     print(f"평가 대상 유저 수: {len(eval_df)}명")
@@ -140,7 +139,7 @@ def print_evaluation_report(eval_df, top_n=10):
             precision_mean=("precision", "mean"),
             recall_mean=("recall", "mean"),
             hit_rate=("hit", "mean"),
-            ndcg_mean=("ndcg", "mean"),          
+            ndcg_mean=("ndcg", "mean"),
             n_users=("user_id", "count"),
         )
         .reset_index()
@@ -148,8 +147,9 @@ def print_evaluation_report(eval_df, top_n=10):
     print(summary.to_string(index=False))
     return summary
 
+
 def evaluate_pipeline(recommender, user_history, lower_bound=10, upper_bound=78,
-                      n_groups=3, sample_per_group=1000, top_n=10, random_state=42):
+                       n_groups=3, sample_per_group=1000, top_n=10, random_state=42):
     user_counts = build_user_review_groups(user_history, lower_bound, upper_bound, n_groups)
     sampled_users = stratified_sample_users(user_counts, sample_per_group, random_state)
     eval_df = run_evaluation(recommender, user_history, sampled_users, top_n, random_state=random_state)
