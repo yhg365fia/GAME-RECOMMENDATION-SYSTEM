@@ -107,16 +107,27 @@ def main():
         top_n=10
         )
     """
-
     # --- [현재 사용하는 평가 방식] ---
     from evaluation import build_user_review_groups, stratified_sample_users, run_evaluation, print_evaluation_report
-
+    
     eligible_users = build_user_review_groups(user_history, lower_bound=10, upper_bound=78)
     sampled_users = stratified_sample_users(eligible_users, sample_per_group=100, random_state=42)
 
-    eval_df = run_evaluation(recommender, user_history, sampled_users, top_n=10)
+    eval_df = run_evaluation(recommender, user_history, sampled_users, user_to_idx=user_to_idx, top_n=10)
     summary = print_evaluation_report(eval_df, top_n=10)
 
+    # n_recommended가 그룹별로 평균 몇 개였는지 확인
+    n_rec_summary = eval_df.groupby("review_group", observed=True)["n_recommended"].agg(
+        ["mean", "min", "max", "count"]
+    )
+    print(n_rec_summary)
 
+    # 전체 평균도 같이
+    print(f"\n전체 n_recommended 평균: {eval_df['n_recommended'].mean():.2f} / 10")
+
+    # 10개 다 채워진 유저 비율도 확인
+    full_ratio = (eval_df["n_recommended"] == 10).mean()
+    print(f"10개 꽉 채워 추천된 유저 비율: {full_ratio:.1%}")
+        
 if __name__ == "__main__":
     main()
