@@ -18,6 +18,10 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **User-Based CF 구현 (Sparse Interaction Matrix, +1/-1 인코딩)**
 - **평가 파이프라인 데이터 누수 버그 발견 및 수정** (자기 자신 제외 로직 무력화 → 인자 전달 누락 확인 후 수정)
 - **User-Based CF의 데이터 희소성(Sparsity) 한계 정량 검증** → Item-Based CF 전환 근거 확보
+- **NDCG 계산 구현 오류 발견 및 수정** (순위 정보가 소실되는 `set` 사용 → 순서 보존하는 `list`로 수정)
+- **Macro Average 외 Micro Precision/Recall/F1 도입**으로 유저별 추천 개수 편차가 평가에 미치는 영향 다각도로 확인
+- **Pearson Correlation을 통한 Sparsity 가설 정량 검증** (`n_games ↔ n_recommended`, `n_games ↔ precision`)
+- **User-Based/Item-Based CF의 Self-Similarity 처리 원칙 정립** (유사도 계산 자체는 문제없음 → Top-K 선정 전 자기 자신 제거로 통일)
 
 를 완료하였습니다.
 
@@ -44,6 +48,10 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **User-Based Collaborative Filtering (Sparse Matrix 기반)**
 - **평가 파이프라인 데이터 누수(Self-Leakage) 진단 및 수정**
 - **User-Based CF Sparsity 한계 분석**
+- **NDCG 순위 보존 버그 수정**
+- **Macro/Micro Precision, Recall, F1 비교 평가**
+- **Pearson Correlation 기반 Sparsity 가설 정량 검증**
+- **Self-Similarity 처리 원칙 정립 (User-Based/Item-Based 공통)**
 
 ---
 
@@ -52,9 +60,9 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - MAP@K
 - Item-Based Collaborative Filtering
 - Matrix Factorization (SVD)
-- Hybrid Recommendation
+- Hybrid Recommendation (실패 유형 기반 설계)
 - Popularity Baseline 비교
-- Micro-Average Precision/Recall 보완 지표 도입
+- Popularity Bias / Near-Duplicate / Coverage 분석
 - FastAPI & Streamlit Deployment
 
 ---
@@ -84,10 +92,12 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 
 ## Evaluation
 
-- Precision@K / Recall@K / Hit Rate@K / NDCG@K
+- Precision@K / Recall@K / Hit Rate@K / NDCG@K (Macro)
+- Micro Precision / Micro Recall / Micro F1
 - Stratified Sampling (리뷰 수 구간 기반)
 - Qualitative Experiment (단일/혼합 입력 결과 분석)
 - Leave-N-Out 유저별 Train/Test Split
+- Pearson Correlation (SciPy) 기반 가설 검증
 
 ## Future Libraries
 
@@ -130,7 +140,8 @@ Game-Recommendation-System/
 │   ├── Day08.md
 │   ├── Day09.md
 │   ├── Day10.md
-│   └── Day11.md
+│   ├── Day11.md
+│   └── Day12.md
 │
 ├── models/
 │   ├── content_base.py
@@ -299,22 +310,71 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 
 ---
 
+# 🐛 NDCG 계산 구현 오류 수정
+
+평가 지표를 Macro/Micro로 확장하는 과정에서 기존 `evaluate_user()`의 NDCG 계산 코드를 재점검하다, 추천 결과를 `set(result["app_id"])`로 바로 변환해 **추천 순위 정보가 소실**되고 있는 것을 발견했습니다.
+
+- Precision/Recall은 포함 여부와 개수만 필요해 순서 무관이지만, NDCG는 "정답이 몇 번째 순위에 있는가"를 평가하는 지표라 순서 보존이 필수입니다.
+- `recommended_list`(순서 보존, NDCG용)와 `recommended_ids`(집합, Precision/Recall 교집합 연산용)로 역할을 분리해 수정했습니다.
+- 수정 후 재평가한 NDCG@10은 **0.0655**로 확인했습니다. 다만 이 값을 "`set → list` 수정 때문에 NDCG가 올랐다"고 단정하지는 않았습니다 — 순서를 반영하지 않던 이전 구현과 이번 값을 직접 비교할 근거가 없으므로, 순서를 올바르게 보존하는 구현으로 수정한 뒤 최종적으로 확인된 값이 0.0655라는 사실만 기록하기로 했습니다.
+
+---
+
+# 📐 Macro vs Micro 평가 및 Sparsity 정량 검증
+
+### Macro → Micro 확장 배경
+
+기존 평가는 유저별 Precision/Recall을 계산 후 평균 내는 Macro 방식이었는데, `n_recommended`가 유저마다 1~10개로 크게 달라(평균 7.28/10, Top-10 완전 채움 54.4%), 추천을 적게 받은 유저와 많이 받은 유저가 Macro 평균에서 동일한 가중치를 갖는 문제를 확인했습니다. 이를 보완하기 위해 **Micro Precision/Recall**(전체 Hits를 전체 추천 수·Test 수로 나눈 값)과 **Micro F1**을 추가로 도입했습니다. Hit Rate와 NDCG는 각각 이미 유저 단위/정규화된 지표라 별도 Micro 확장이 필요하지 않다고 판단해 제외했습니다.
+
+> Micro 수치가 Macro보다 높게 나온 것은 **모델 성능이 개선된 것이 아니라, 동일한 결과를 다른 가중치 기준으로 재집계**한 것입니다.
+
+### Sparsity 가설 정량 검증 (Pearson Correlation)
+
+| 비교 변수 | Pearson r | p-value |
+|---|---|---|
+| n_games ↔ n_recommended | +0.3096 | < 0.0001 |
+| n_games ↔ precision | +0.2504 | < 0.0001 |
+
+r 값은 약~중간 수준의 양의 상관이며, 상관관계가 인과관계를 증명하지는 않습니다. 다만 review_group별 추이(추천 개수 5.74→8.54, Precision 0.024→0.098)와 함께, **"interaction이 적을수록 안정적인 이웃 형성이 어렵다"는 기존 가설과 일관된 방향의 정황**으로 해석했습니다.
+
+---
+
+# 🔗 Self-Similarity 처리 원칙 (User-Based / Item-Based 공통)
+
+Item-Based CF로 전환하기 전, "자기 자신과의 유사도를 계산하는 것 자체가 문제인가"를 정리했습니다.
+
+- **자기 자신과의 유사도를 계산하는 것 자체는 문제가 아닙니다.** 문제는 자기 자신이 **Top-K neighbor로 선정되어 실제 추천 계산에 쓰이는 순간**부터 발생합니다.
+- **User-Based CF**: 본인의 interaction(Test 포함)이 neighbor로 사용되며 정답 정보가 추천 점수로 유출되는 **데이터 누수** 문제
+- **Item-Based CF**: `A↔A=1.0`이라는 자명한 값이 항상 최고 유사도로 Top-K를 차지해, 자기 자신에게 다시 가중치를 부여하는 **trivial self-similarity** 문제
+
+두 모델 모두 다음 구현 원칙으로 통일했습니다:
+```python
+similarities = cosine_similarity(...)
+similarities[self_idx] = 0
+# 이후 Top-K 선정
+```
+
+---
+
 # 📊 User-Based CF Evaluation Results
 
-그룹당 100명 샘플링 기준 (유효 평가 유저 362명, 스킵 38명)
+그룹당 100명 샘플링 기준 (유효 평가 유저 362명, 스킵 38명). NDCG는 순위 보존 버그 수정 반영된 최신 값입니다.
 
-| 구분 | Precision@10 | Recall@10 | Hit Rate@10 | NDCG@10 |
-|---|---|---|---|---|
-| 전체 평균 | 0.0545 | 0.0427 | 0.3011 | 0.0543 |
+| 구분 | Precision@10 | Recall@10 | F1@10 | Hit Rate@10 | NDCG@10 |
+|---|---|---|---|---|---|
+| Macro | 0.0545 | 0.0427 | - | 0.3011 | 0.0655 |
+| Micro | 0.0626 | 0.0454 | 0.0526 | - | - |
 
 | review_group | precision_mean | recall_mean | hit_rate | ndcg_mean | n_users |
 |---|---|---|---|---|---|
-| 10-15개 | 0.0242 | 0.0303 | 0.1039 | 0.0277 | 77 |
-| 16-25개 | 0.0388 | 0.0451 | 0.2151 | 0.0416 | 93 |
-| 26-45개 | 0.0482 | 0.0445 | 0.3478 | 0.0499 | 92 |
-| 46-78개 | 0.0982 | 0.0483 | 0.4900 | 0.0906 | 100 |
+| 10-15개 | 0.0242 | 0.0303 | 0.1039 | 0.0346 | 77 |
+| 16-25개 | 0.0388 | 0.0451 | 0.2151 | 0.0530 | 93 |
+| 26-45개 | 0.0482 | 0.0445 | 0.3478 | 0.0599 | 92 |
+| 46-78개 | 0.0982 | 0.0483 | 0.4900 | 0.1061 | 100 |
 
-**핵심 발견**: 리뷰 수(review_group)가 많은 유저일수록 Precision/Hit Rate/NDCG가 함께 상승하는 패턴을 확인. 동일 구간에서 추천 후보 개수(`n_recommended`, 평균 7.28/10, 10개 완전 채움 비율 54.4%)도 함께 증가하는 것으로 보아, **User-Based CF는 상호작용 데이터가 풍부한 유저에게는 어느 정도 작동하지만, 데이터가 희소(sparse)한 유저에게는 이웃 매칭 자체가 어려워 성능이 급격히 저하되는 구조적 한계**를 가짐을 확인. 이 결과를 근거로 Item-Based CF로 전환하기로 결정.
+**핵심 발견**: 리뷰 수(review_group)가 많은 유저일수록 Precision/Hit Rate/NDCG가 함께 상승하는 패턴을 확인. 동일 구간에서 추천 후보 개수(`n_recommended`, 평균 7.28/10, 10개 완전 채움 비율 54.4%)도 함께 증가하며, 개별 유저 단위 Pearson Correlation(`n_games ↔ n_recommended` r=+0.31, `n_games ↔ precision` r=+0.25, 둘 다 p<0.0001)에서도 같은 방향의 관계를 확인. **User-Based CF는 상호작용 데이터가 풍부한 유저에게는 어느 정도 작동하지만, 데이터가 희소(sparse)한 유저에게는 이웃 매칭 자체가 어려워 성능이 급격히 저하되는 구조적 한계**를 가짐을 확인. 단일 지표가 아닌 추천 생성 안정성·그룹별 추이·상관분석이 일관된 방향을 보인다는 점을 근거로 Item-Based CF로 전환하기로 결정.
+
+> 참고: Offline 평가의 Test set은 "사용자가 좋아할 수 있는 모든 정답"이 아니라 "숨겨둔 일부 관측된 interaction을 얼마나 복원하는가"에 가까우므로, Precision 절대값만으로 모델의 좋고 나쁨을 단정하지 않고 있습니다. Popularity Bias, Near-Duplicate/Series Bias, Coverage/Personalization 등은 Item-Based·Model-Based까지 구현한 뒤 여러 모델의 failure mode를 비교하며 분석할 예정입니다.
 
 ---
 
@@ -385,7 +445,6 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 - [x] NDCG@K
 - [x] 정성적 실험 (단일 입력 / 장르 혼합 입력)
 - [ ] 장르 혼합 쏠림 현상 최소 검증 (단독 입력 비교)
-- [ ] Popularity Baseline 비교
 - [ ] 그룹당 400명 규모 통계적 재검증
 
 ### Software Engineering
@@ -408,8 +467,10 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 - [x] 데이터 누수 버그 진단 및 수정 (`user_to_idx` 인자 전달 누락)
 - [x] 기존 evaluation.py 파이프라인 재사용하여 Content-Based와 정량 비교
 - [x] Sparsity에 따른 성능 한계 분석 및 Item-Based 전환 결정
-- [ ] Micro-Average Precision/Recall 보완 지표 계산
-- [ ] 유저 게임 수 - Precision 상관관계 정량 검증 (Pearson Correlation)
+- [x] NDCG 계산 순위 보존 버그 수정 (`set` → `list`)
+- [x] Micro-Average Precision/Recall/F1 계산
+- [x] 유저 게임 수 - Precision 상관관계 정량 검증 (Pearson Correlation)
+- [x] User-Based/Item-Based 공통 Self-Similarity 처리 원칙 정립
 
 ### Item-Based CF (예정)
 
@@ -420,6 +481,12 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 ### Matrix Factorization (예정)
 
 - [ ] Matrix Factorization (SVD)
+
+### MAP & Popularity Baseline (Item-Based 이후, Hybrid 이전 진행 예정)
+
+- [ ] MAP@K 구현
+- [ ] Popularity Baseline 비교
+- [ ] Hit item의 Popularity Bias 분석
 
 ---
 
@@ -446,9 +513,9 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 - Precision@K
 - Recall@K
 - Hit Rate@K
-- NDCG@K
+- NDCG@K (순위 보존 검증 완료)
+- Micro Precision/Recall/F1 (추천 개수 편차 보완용)
 - MAP (예정)
-- Micro-Average Precision/Recall (예정, 추천 개수 편차 보완용)
 
 ### Sampling Strategy
 
@@ -500,10 +567,14 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 | Qualitative Experiment | ✅ |
 | User-Based Collaborative Filtering | ✅ |
 | Data Leakage 진단/수정 | ✅ |
-| MAP | 🚧 |
-| Popularity Baseline | 🚧 |
+| NDCG 순위 보존 버그 수정 | ✅ |
+| Macro/Micro 평가 (Precision/Recall/F1) | ✅ |
+| Sparsity 가설 정량 검증 (Pearson Correlation) | ✅ |
+| Self-Similarity 처리 원칙 정립 | ✅ |
 | Item-Based Collaborative Filtering | 🚧 |
 | Matrix Factorization | 🚧 |
+| MAP | 🚧 |
+| Popularity Baseline | 🚧 |
 | Hybrid Recommendation | 🚧 |
 | Deployment | 🚧 |
 
@@ -511,7 +582,7 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 
 # 📌 Project Status
 
-**Current Version:** `V2.1 - User-Based Collaborative Filtering Evaluation`
+**Current Version:** `V2.2 - User-Based CF 평가 보완 및 Item-Based 전환 결정`
 
 ### Completed
 
@@ -531,19 +602,23 @@ User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.02
 - **User-Based Collaborative Filtering 구현 (Sparse Matrix)**
 - **평가 파이프라인 데이터 누수 버그 진단 및 수정**
 - **Sparsity에 따른 User-Based CF 성능 한계 정량 확인**
+- **NDCG 계산 순위 보존 버그 수정**
+- **Macro/Micro Precision·Recall·F1 비교 평가 도입**
+- **Pearson Correlation 기반 Sparsity 가설 정량 검증**
+- **User-Based/Item-Based 공통 Self-Similarity 처리 원칙 정립**
 
 ### Next Milestone
 
-➡️ MAP@K 구현
+➡️ Item-Based Collaborative Filtering 구현
 
-➡️ Micro-Average Precision/Recall 보완 지표 도입
-
-➡️ 장르 혼합 쏠림 현상 최소 검증
-
-➡️ Item-Based Collaborative Filtering
+➡️ User-Based 대비 Sparsity 강건성 비교
 
 ➡️ Matrix Factorization (SVD)
 
-➡️ Hybrid Recommendation
+➡️ MAP@K 구현
+
+➡️ Popularity Baseline 및 Popularity Bias / Coverage 분석
+
+➡️ Hybrid Recommendation (모델별 failure mode 기반 설계)
 
 ➡️ Web Service Deployment

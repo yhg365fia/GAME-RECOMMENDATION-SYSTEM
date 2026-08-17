@@ -90,11 +90,6 @@ class UserBasedCFRecommender:
         top_n_idx = top_n_idx[np.argsort(-predicted_scores[top_n_idx])]
 
         recommended_app_ids = [self.idx_to_game[i] for i in top_n_idx]
-        
-        if exclude_user_idx is not None:
-                    before = sims[0, exclude_user_idx]
-                    print(f"[DEBUG] self-sim before exclude: {before}")  # 1에 가까운 값이어야 정상
-                    sims[0, exclude_user_idx] = 0
 
         return pd.DataFrame({"app_id": recommended_app_ids})
 
