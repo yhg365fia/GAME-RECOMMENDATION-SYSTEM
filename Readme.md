@@ -22,8 +22,10 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **Macro Average 외 Micro Precision/Recall/F1 도입**으로 유저별 추천 개수 편차가 평가에 미치는 영향 다각도로 확인
 - **Pearson Correlation을 통한 Sparsity 가설 정량 검증** (`n_games ↔ n_recommended`, `n_games ↔ precision`)
 - **User-Based/Item-Based CF의 Self-Similarity 처리 원칙 정립** (유사도 계산 자체는 문제없음 → Top-K 선정 전 자기 자신 제거로 통일)
+- **Item-Based CF 구현 착수** (User×Item → Item×User transpose, source item 기반 similarity 계산, 행별 Top-K 구조 설계)
+- **User-Based/Item-Based CF의 구조적 차이 정리** (query vector 필요 여부, similarity가 output 공간에 존재하는지 여부 등)
 
-를 완료하였습니다.
+를 완료하였으며, Item-Based CF는 현재 구현이 진행 중입니다.
 
 향후에는 Item-Based Collaborative Filtering, Matrix Factorization, Hybrid Recommendation, 추천 성능 평가 및 웹 서비스 배포까지 확장하는 것을 목표로 합니다.
 
@@ -52,13 +54,19 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **Macro/Micro Precision, Recall, F1 비교 평가**
 - **Pearson Correlation 기반 Sparsity 가설 정량 검증**
 - **Self-Similarity 처리 원칙 정립 (User-Based/Item-Based 공통)**
+- **Item-Based CF 구조 설계 및 구현 착수** (transpose, source item similarity, 행별 Top-K)
+
+---
+
+## 🚧 In Progress
+
+- Item-Based Collaborative Filtering (candidate aggregation 및 최종 스코어링 구현 중)
 
 ---
 
 ## 🚀 Future
 
 - MAP@K
-- Item-Based Collaborative Filtering
 - Matrix Factorization (SVD)
 - Hybrid Recommendation (실패 유형 기반 설계)
 - Popularity Baseline 비교
@@ -89,6 +97,7 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - TF-IDF Vectorization
 - Cosine Similarity
 - User-Based Collaborative Filtering (Neighborhood-based, Top-K)
+- Item-Based Collaborative Filtering (구현 중, Neighborhood-based, 행별 Top-K)
 
 ## Evaluation
 
@@ -141,11 +150,13 @@ Game-Recommendation-System/
 │   ├── Day09.md
 │   ├── Day10.md
 │   ├── Day11.md
-│   └── Day12.md
+│   ├── Day12.md
+│   └── Day13.md
 │
 ├── models/
 │   ├── content_base.py
-│   └── userbase.py
+│   ├── userbase.py
+│   └── itembase.py          # 구현 중
 │
 ├── notebooks/
 │   ├── 01_data_exploration.ipynb
@@ -245,6 +256,46 @@ Top-N 추천 (n_recommended ≤ N, 후보 부족 시 N보다 적을 수 있음)
       ▼
 Recommendation Evaluation (Precision/Recall/Hit Rate/NDCG, 구간별 Breakdown)
 ```
+
+## Item-Based CF Pipeline (구현 중)
+
+```text
+User History (user_id, app_id, is_recommended)
+      │
+      ▼
+build_interaction_matrix() (User-Based와 동일 함수 재사용)
+      │
+      ▼
+interaction_matrix.T → item_matrix (Item x User 구조로 전환)
+      │
+      ▼
+유저의 Train App ID → item_matrix에서 해당 게임 행(Source Items) 조회
+  (별도 Query Vector 생성 불필요 — Item이 이미 행으로 존재)
+      │
+      ▼
+Cosine Similarity (Source Items vs 전체 item_matrix)
+  → Train item 개수 × 전체 Item 개수 shape의 similarity 행렬
+      │
+      ▼
+각 Source Item의 Self-Similarity 0 처리 (A↔A 제거)
+      │
+      ▼
+Source Item별 행(row) 단위 Top-K 추출 (전체가 아닌 행별로 Top-30)
+      │
+      ▼
+[구현 중] 동일 Candidate로 모이는 Similarity를 합산(Aggregation) → Candidate Score
+      │
+      ▼
+[예정] 이미 플레이한 게임(Train) 제외 + 양수 점수만 후보로 채택
+      │
+      ▼
+[예정] Top-N 추천 (기존 recommend() 출력 형식과 동일하게 유지)
+      │
+      ▼
+[예정] 기존 evaluation.py 재사용하여 User-Based와 동일 조건으로 비교
+```
+
+> Item-Based는 similarity 계산 결과가 이미 output 공간(Item)에 존재하기 때문에, User-Based처럼 "유사 이웃 → 이웃의 interaction"으로 한 단계 더 연결할 필요가 없습니다. 대신 여러 Source Item의 similarity를 하나의 candidate score로 합치는 aggregation 단계가 User-Based에는 없던 추가 설계 지점입니다.
 
 ---
 
@@ -353,6 +404,41 @@ similarities = cosine_similarity(...)
 similarities[self_idx] = 0
 # 이후 Top-K 선정
 ```
+
+---
+
+# 🧠 Item-Based CF 구조 이해 및 구현 착수 (진행 중)
+
+Item-Based CF를 기존 `userbase.py` 기반으로 구현하면서, 두 모델이 단순히 "similarity 대상만 다른 것"이 아니라 구조적으로 다르다는 점을 정리했습니다.
+
+### User-Based vs Item-Based 구조 비교
+
+| 구분 | User-Based CF | Item-Based CF |
+|---|---|---|
+| Matrix 방향 | User × Item | Item × User (`interaction_matrix.T`) |
+| Query 필요 여부 | 필요 (User를 벡터로 재구성) | 불필요 (Item이 이미 행으로 존재) |
+| Similarity 대상 | User ↔ User | Item ↔ Item |
+| Similarity 결과 shape | 1 × n_users (한 행) | Train item 개수 × n_items (여러 행) |
+| Top-K 방식 | 전체에서 한 번 | Source item마다 행별로 |
+| Similarity → Output 거리 | User 유사도 → 이웃의 interaction까지 연결해야 Item(output) 도출 | Similarity 자체가 이미 Item(output) 공간에 존재 |
+
+### 핵심 정리
+
+- **`.getrow(0)`은 User-Based/Item-Based를 결정하는 요소가 아닙니다.** 어떤 similarity(User-User vs Item-Item)가 계산되는지는 matrix의 각 행이 무엇을 의미하는지가 결정하며, `.getrow()`는 단지 결과 행을 꺼내는 연산일 뿐입니다.
+- **Self-similarity 제거와 이미 플레이한 게임(Seen-item) 제거는 별개의 과정입니다.** `A↔A`를 0으로 만드는 것은 자기 자신이 trivial하게 최고 유사도를 차지하는 걸 막는 것이고, Train에서 이미 interaction한 아이템을 최종 후보에서 빼는 것(`predicted_scores[col_idx] = -np.inf`)은 다른 목적입니다. 두 과정 모두 필요합니다.
+- **여러 Source Item의 similarity를 합치는 aggregation이 필요합니다.** 추천은 최종적으로 1차원 ranking을 만들어야 하므로, 여러 관계를 하나의 candidate score로 축약하는 과정 자체는 불가피합니다. 단순 합(sum)은 그 중 가장 기본적인 방식일 뿐이며, 평균·최대값·가중치 부여 등 다른 aggregation도 가능합니다.
+
+### 구현 방향 (오늘 확정)
+
+- `evaluation.py`와 main pipeline은 그대로 유지 — User-Based/Item-Based 비교 조건 통일
+- 기존 `build_interaction_matrix()` 재사용, `interaction_matrix.T`로 Item 관점만 추가
+- 전체 Item×Item dense similarity는 생성하지 않고, Source item과 전체 item 간 sparse similarity만 계산
+- K는 User-Based와 동일하게 30으로 우선 설정
+- Aggregation은 우선 가장 기본적인 similarity 합산(sum) baseline으로 구현 후 결과를 보고 개선 여부 판단
+
+### 진행 상태
+
+현재 Source Item별 similarity 계산과 self-similarity 제거까지 구현했고, **행별 Top-K 추출 → candidate aggregation → Train item 제외 → Top-N 반환**은 다음 단계로 진행 중입니다.
 
 ---
 
@@ -472,10 +558,19 @@ similarities[self_idx] = 0
 - [x] 유저 게임 수 - Precision 상관관계 정량 검증 (Pearson Correlation)
 - [x] User-Based/Item-Based 공통 Self-Similarity 처리 원칙 정립
 
-### Item-Based CF (예정)
+### Item-Based CF (구현 중)
 
-- [ ] Item-Based Collaborative Filtering 구현
-- [ ] User-Based CF 대비 Sparsity 강건성 비교
+- [x] `models/itembase.py` 생성 (기존 `userbase.py` 기반)
+- [x] User×Item → Item×User 구조 변환 (`interaction_matrix.T`)
+- [x] Source Item(Train App ID) 기반 similarity 계산 (별도 Query Vector 불필요 확인)
+- [x] Source Item별 Self-Similarity 0 처리
+- [x] User-Based/Item-Based 구조적 차이 정리 (query 필요 여부, output 공간과의 거리 등)
+- [ ] 행별(Source Item별) Top-K 추출 로직 완성
+- [ ] Candidate Aggregation 구현 (동일 candidate로 모이는 similarity 합산)
+- [ ] Train Item Exclusion 적용 (`predicted_scores[col_idx] = -np.inf`)
+- [ ] Positive Score Filtering 및 Top-N 반환 (기존 `recommend()` 출력 형식 유지)
+- [ ] 기존 evaluation.py 재사용하여 User-Based CF와 정량 비교
+- [ ] User-Based CF 대비 Sparsity 강건성 비교 (`n_recommended` 부족 현상 완화 여부)
 - [ ] 콘텐츠 기반에서 발견한 쏠림 현상이 협업 필터링에서도 재현되는지 비교
 
 ### Matrix Factorization (예정)
@@ -533,7 +628,7 @@ similarities[self_idx] = 0
 
 - Content-Based Recommendation
 - User-Based Collaborative Filtering
-- Item-Based Collaborative Filtering (예정)
+- Item-Based Collaborative Filtering (구현 중)
 - Hybrid Recommendation (예정)
 - Popularity Baseline (예정)
 
@@ -571,6 +666,7 @@ similarities[self_idx] = 0
 | Macro/Micro 평가 (Precision/Recall/F1) | ✅ |
 | Sparsity 가설 정량 검증 (Pearson Correlation) | ✅ |
 | Self-Similarity 처리 원칙 정립 | ✅ |
+| Item-Based CF 구조 설계 및 착수 | ✅ |
 | Item-Based Collaborative Filtering | 🚧 |
 | Matrix Factorization | 🚧 |
 | MAP | 🚧 |
@@ -582,7 +678,7 @@ similarities[self_idx] = 0
 
 # 📌 Project Status
 
-**Current Version:** `V2.2 - User-Based CF 평가 보완 및 Item-Based 전환 결정`
+**Current Version:** `V2.3 - Item-Based CF 구현 착수`
 
 ### Completed
 
@@ -606,10 +702,15 @@ similarities[self_idx] = 0
 - **Macro/Micro Precision·Recall·F1 비교 평가 도입**
 - **Pearson Correlation 기반 Sparsity 가설 정량 검증**
 - **User-Based/Item-Based 공통 Self-Similarity 처리 원칙 정립**
+- **Item-Based CF 구조 설계 및 구현 착수** (transpose, source item similarity, self-similarity 처리)
+
+### In Progress
+
+- Item-Based CF: 행별 Top-K 추출 → candidate aggregation → Train item exclusion → Top-N 반환
 
 ### Next Milestone
 
-➡️ Item-Based Collaborative Filtering 구현
+➡️ Item-Based Collaborative Filtering 구현 완료
 
 ➡️ User-Based 대비 Sparsity 강건성 비교
 
