@@ -1,4 +1,5 @@
 from models.content_base import ContentBasedRecommender
+from models.itembase import ItemBasedCFRecommender
 from models.userbase import build_interaction_matrix, UserBasedCFRecommender
 from preprocessing import load_games, load_recommendations, load_train, preprocess
 from evaluation import evaluate_pipeline
@@ -7,11 +8,11 @@ import pandas as pd
 import os
 
 print(os.getcwd())
-"""
+
 def resolve_name_to_appid(meta, name):
     
-    사용자가 입력한 게임 '이름'을 app_id로 변환.
-    동명이인 게임이 있으면 사용자에게 선택하게 함.
+    """사용자가 입력한 게임 '이름'을 app_id로 변환.
+    동명이인 게임이 있으면 사용자에게 선택하게 함.1"""
     
     candidates = meta[meta["Name"] == name]
 
@@ -34,44 +35,41 @@ def resolve_name_to_appid(meta, name):
             return candidates.iloc[int(choice)]["app_id"]
         print("올바른 번호를 입력해주세요.")
 
-"""
+
 def main():
 
-    
-    # =========================================
-    # Recommender 생성부
-    # 아래 두 블록 중 하나만 활성화해서 사용
-    # =========================================
-
-    # --- [Content-based] ---
-    # recommender = ContentBasedRecommender(...)   # 기존에 쓰던 생성 코드로 교체
-
-    # --- [User-based CF] ---
-    from models.userbase import build_interaction_matrix, UserBasedCFRecommender
+    meta = load_games()
     user_history = load_recommendations()
-    
-    interaction_matrix, user_to_idx, game_to_idx, idx_to_game = build_interaction_matrix(user_history)
-    recommender = UserBasedCFRecommender(interaction_matrix, game_to_idx, idx_to_game, k=30)
 
-    # =========================================
-    # 게임 입력받아 단건 추천 (기존 로직 그대로)
-    # =========================================
-    """
+    interaction_matrix, user_to_idx, game_to_idx, idx_to_game = \
+        build_interaction_matrix(user_history)
+
+    recommender = ItemBasedCFRecommender(
+        interaction_matrix,
+        game_to_idx,
+        idx_to_game,
+        k=30
+    )
+
     played_games = []
+
     while True:
         game = input("게임 이름: ").strip()
+
         if game == "":
             break
+
         played_games.append(game)
 
     if len(played_games) == 0:
         print("최소 1개의 게임을 입력해야 합니다.")
         return
 
-    # 이름 -> AppID 변환 (여기서 중복 처리까지 완료됨)
     played_app_ids = []
+
     for game_name in played_games:
         app_id = resolve_name_to_appid(meta, game_name)
+
         if app_id is not None:
             played_app_ids.append(app_id)
 
@@ -79,10 +77,21 @@ def main():
         print("유효한 게임이 없습니다.")
         return
 
-    # recommend()는 오직 AppID 리스트만 받음
-    result = recommender.recommend(app_id_list=played_app_ids, top_n=10)
-    print(result)
-    """
+    result = recommender.recommend(
+    app_id_list=played_app_ids,
+    top_n=10
+)
+
+# 추천 AppID에 게임 이름 붙이기
+    result = result.merge(
+        meta[["app_id", "Name"]],
+        on="app_id",
+        how="left"
+    )
+
+    print("\n===== 추천 결과 =====")
+    print(result[["app_id", "Name"]].to_string(index=False))
+
 
     # =========================================
     # 평가 시스템 적용

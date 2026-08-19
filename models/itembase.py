@@ -71,21 +71,24 @@ class ItemBasedCFRecommender:
         for row_idx in range(sims.shape[0]):
             row = sims.getrow(row_idx)
 
-            if len(row.data) == 0:
+            positive_mask = row.data > 0
+            positive_data = row.data[positive_mask]
+            positive_indices = row.indices[positive_mask]
+
+            if len(positive_data) == 0:
                 continue
 
-            k = min(self.k, len(row.data))
+            k = min(self.k, len(positive_data))
 
-            top_k_pos = np.argpartition(row.data, -k)[-k:]
+            top_k_pos = np.argpartition(positive_data, -k)[-k:]
 
-            topk_sims_list.append(row.data[top_k_pos])
-            topk_indices_list.append(row.indices[top_k_pos])
+            topk_sims_list.append(positive_data[top_k_pos])
+            topk_indices_list.append(positive_indices[top_k_pos])
 
-        # 4. 가중합 예측 점수 = (유사도 x 이웃 interaction) 합 / 유사도 절댓값 합
-        neighbor_matrix = self.interaction_matrix[neighbor_indices]
-        weighted_sum = np.asarray(neighbor_sims @ neighbor_matrix).flatten()
-        sim_sum = np.abs(neighbor_sims).sum()
-        predicted_scores = weighted_sum / sim_sum if sim_sum > 0 else weighted_sum
+        predicted_scores = np.zeros(self.item_matrix.shape[0])
+
+        for topk_indices, topk_sims in zip(topk_indices_list, topk_sims_list):
+            predicted_scores[topk_indices] += topk_sims
 
         # 5. 이미 상호작용한 게임(train에 있던 것)은 추천 후보에서 제외
         predicted_scores[col_idx] = -np.inf
