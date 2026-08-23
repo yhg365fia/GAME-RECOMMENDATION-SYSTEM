@@ -81,6 +81,7 @@ def main():
     app_id_list=played_app_ids,
     top_n=10
 )
+    
 
 # 추천 AppID에 게임 이름 붙이기
     result = result.merge(
@@ -91,6 +92,7 @@ def main():
 
     print("\n===== 추천 결과 =====")
     print(result[["app_id", "Name"]].to_string(index=False))
+
 
 
     # =========================================
