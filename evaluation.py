@@ -259,3 +259,4 @@ def evaluate_pipeline(recommender, user_history, lower_bound=10, upper_bound=78,
     eval_df = run_evaluation(recommender, user_history, sampled_users, top_n, random_state=random_state)
     summary = print_evaluation_report(eval_df, top_n)
     return eval_df, summary
+

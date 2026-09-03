@@ -25,10 +25,12 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **Item-Based CF 구현 완료** (Source Item별 행 단위 Top-K 추출, Candidate Aggregation, Train Item Exclusion, Top-N 반환까지 전체 파이프라인 완성)
 - **Item-Based CF 정량평가 완료** (400명 규모, User-Based 대비 Precision/Recall/HitRate/NDCG 전 지표 상승, `n_recommended` 100% 충족으로 Sparsity 한계 완화 확인)
 - **Item-Based CF 정성평가 완료** (6개 실험을 통해 콘텐츠 기반과는 다른 방향으로 쏠리는 현상 발견, Content-Based vs Item-Based가 서로 다른 signal을 포착한다는 결론 도출)
+- **Model-Based CF 전환 및 MF Train/Test 구조 재설계** (Memory-based CF의 사용자별 70:30 split 구조가 Global Model인 MF에는 적합하지 않음을 확인하고, 평가 대상 유저 666,781명(70:30) + 그 외 유저(100% Train)로 구조 변경, 총 41,154,794건 interaction을 Parquet으로 저장)
+- **Surprise 기반 Funk SVD 모델 구현 및 학습 성공** (`SVD(n_factors=100, n_epochs=20, lr_all=0.005, reg_all=0.02)`, 10만 건 샘플 및 전체 Train 3,700만 건 규모에서 학습 파이프라인 정상 작동 확인)
 
-를 완료하였으며, Model-Based CF(Matrix Factorization)는 다음 baseline으로 설계를 준비 중입니다.
+를 완료하였으며, 현재는 **Model-Based CF 단계에서 Funk SVD baseline의 학습 파이프라인을 완성하고, Top-N 추천 및 기존 평가 파이프라인과의 연결을 진행하는 단계**입니다.
 
-향후에는 Matrix Factorization, Hybrid Recommendation, 추천 성능 평가 및 웹 서비스 배포까지 확장하는 것을 목표로 합니다.
+향후에는 Funk SVD 평가 완료 → ALS(짧은 비교 실험) → Clustering(사용자 군집화 분석) → BPR(진행 상황에 따라 선택적 확장) 순서로 서로 다른 모델의 구조와 성능을 경험한 뒤, 전체 모델 비교·소규모 튜닝·Hybrid Recommendation·웹 서비스 배포까지 확장하는 것을 목표로 합니다.
 
 ---
 
@@ -58,22 +60,29 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - **Item-Based Collaborative Filtering 구현 완료** (행별 Top-K, Candidate Aggregation, Train Item Exclusion, Top-N 반환)
 - **Item-Based CF 정량평가 완료** (User-Based 대비 전 지표 상승, Sparsity 강건성 확인)
 - **Item-Based CF 정성평가 완료** (Content-Based와의 쏠림 방향 비교, Hybrid 설계 필요성 확인)
+- **Model-Based CF용 대규모 Train/Test Split 설계 및 Parquet 저장** (41,154,794건, Global Model 특성을 반영한 구조로 재설계)
+- **Surprise 기반 Funk SVD 학습 파이프라인 구현 및 정상 작동 확인**
 
 ---
 
 ## 🚧 In Progress
 
-- Model-Based CF (Matrix Factorization) baseline 모델 선정 및 설계
+- **Funk SVD 학습 데이터 규모 결정 및 전체 Train 데이터 학습**
+- **Funk SVD 기반 Top-N 추천 함수 구현 (Candidate Generation → Seen-item Exclusion → Ranking)**
+- **기존 evaluation.py 파이프라인에 Funk SVD 연결 (Precision/Recall/Hit Rate/NDCG 비교)**
 
 ---
 
 ## 🚀 Future
 
+- ALS (Matrix Factorization 최적화 방식 비교, 짧은 실험)
+- Clustering (사용자 군집화/세그먼트 분석 중심의 짧은 실험)
+- BPR (Top-N Ranking 학습, 프로젝트 진행 상황에 따라 선택적 진행)
+- 전체 모델 동일 evaluation pipeline 비교 및 최상위 1~2개 모델 소규모 튜닝
 - MAP@K
-- Matrix Factorization (SVD)
-- Hybrid Recommendation (실패 유형 기반 설계)
 - Popularity Baseline 비교
 - Popularity Bias / Near-Duplicate / Coverage 분석
+- Hybrid Recommendation (실패 유형 기반 설계)
 - FastAPI & Streamlit Deployment
 
 ---
@@ -94,6 +103,7 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 ## Machine Learning
 
 - Scikit-learn
+- **Surprise** (Funk SVD 구현)
 
 ### Algorithms
 
@@ -101,6 +111,7 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - Cosine Similarity
 - User-Based Collaborative Filtering (Neighborhood-based, Top-K)
 - Item-Based Collaborative Filtering (Neighborhood-based, 행별 Top-K, Similarity Sum Aggregation)
+- **Matrix Factorization / Funk SVD** (Surprise `SVD`, SGD 기반 Latent Factor 학습)
 
 ## Evaluation
 
@@ -108,12 +119,12 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 - Micro Precision / Micro Recall / Micro F1
 - Stratified Sampling (리뷰 수 구간 기반)
 - Qualitative Experiment (단일/혼합 입력 결과 분석)
-- Leave-N-Out 유저별 Train/Test Split
+- Leave-N-Out 유저별 Train/Test Split (Memory-based CF)
+- **Global Train/Test Split (Model-Based CF, 평가 대상 유저 70:30 + 그 외 유저 100% Train)**
 - Pearson Correlation (SciPy) 기반 가설 검증
 
 ## Future Libraries
 
-- Surprise
 - Implicit
 
 ## Visualization
@@ -131,15 +142,17 @@ Steam 게임 데이터를 활용하여 다양한 추천 시스템 알고리즘�
 
 ```text
 Game-Recommendation-System/
-
 │
 ├── data/
 │   ├── raw/
-│   └── cache/              # 전처리/로딩 결과 캐싱 (Parquet)
-│       ├── games.parquet
-│       ├── train.parquet
-│       ├── test.parquet
-│       └── recommendations.parquet
+│   ├── cache/               # 전처리/로딩 결과 캐싱 (Parquet)
+│   │   ├── games.parquet
+│   │   ├── train.parquet
+│   │   ├── test.parquet
+│   │   └── recommendations.parquet
+│   └── split/                # Model-Based CF용 Global Train/Test (Parquet)
+│       ├── mf_train.parquet
+│       └── mf_test.parquet
 │
 ├── docs/
 │   ├── Day01.md
@@ -156,12 +169,14 @@ Game-Recommendation-System/
 │   ├── Day12.md
 │   ├── Day13.md
 │   ├── Day14.md
-│   └── Day15.md
+│   ├── Day15.md
+│   └── Day16.md
 │
 ├── models/
 │   ├── content_base.py
 │   ├── userbase.py
-│   └── itembase.py          # 구현 완료
+│   ├── itembase.py          # 구현 완료
+│   └── funk_svd.py           # 구현 중 (학습 파이프라인 완성, 평가 연결 진행 중)
 │
 ├── notebooks/
 │   ├── 01_data_exploration.ipynb
@@ -170,6 +185,7 @@ Game-Recommendation-System/
 │   └── 04_evaluation_dataset.ipynb
 │
 ├── preprocessing.py
+├── data_split.py              # Model-Based CF용 Global Train/Test 생성·저장·로드
 ├── evaluation.py
 ├── main.py
 │
@@ -302,6 +318,47 @@ Recommendation Evaluation (기존 evaluation.py 재사용, User-Based와 동일 
 
 > Item-Based는 similarity 계산 결과가 이미 output 공간(Item)에 존재하기 때문에, User-Based처럼 "유사 이웃 → 이웃의 interaction"으로 한 단계 더 연결할 필요가 없습니다. 대신 여러 Source Item의 similarity를 하나의 candidate score로 합치는 aggregation 단계가 User-Based에는 없던 추가 설계 지점이며, 현재는 가장 기본적인 similarity sum 방식을 baseline으로 채택했습니다.
 
+## Model-Based CF (Funk SVD) Pipeline — 학습 파이프라인 구현 완료, 평가 연결 진행 중
+
+Memory-based CF(User/Item-Based)는 평가 시점에 사용자별로 70:30 split을 적용해도 문제가 없었지만, Funk SVD는 **모든 사용자 interaction으로 User/Item latent vector를 동시에 학습하는 Global Model**이라 평가 대상 유저마다 모델을 다시 학습하는 기존 구조를 쓸 수 없습니다. 이에 따라 Train/Test 구조 자체를 다음과 같이 재설계했습니다.
+
+```text
+전체 Interaction (recommendations)
+      │
+      ▼
+평가 대상 유저 판별 (interaction 10~78개, 666,781명)
+      │
+      ├─ 평가 대상 유저 ── 70% Train / 30% Test
+      └─ 그 외 유저     ── 100% Train
+      │
+      ▼
+data_split.py
+  → interaction 개수별 동일 position pattern 재사용 (66만 회 → 최대 69회 split 연산으로 최적화)
+  → mf_train.parquet (37,113,471건) / mf_test.parquet (4,041,323건) 저장
+      │
+      ▼
+mf_train.parquet 로드
+      │
+      ▼
+Surprise Dataset 변환
+  (user_id, app_id, is_recommended[0/1] → Reader(rating_scale=(0,1)) → build_full_trainset())
+      │
+      ▼
+Funk SVD 학습
+  SVD(n_factors=100, n_epochs=20, lr_all=0.005, reg_all=0.02, random_state=42).fit(trainset)
+      │
+      ▼
+model.predict(user_id, app_id).est → User-Item Ranking Score
+      │
+      ▼
+[진행 중] 이미 Train에서 본 게임 제외 → Candidate Score 정렬 → Top-N 반환
+      │
+      ▼
+[진행 중] Recommendation Evaluation (기존 evaluation.py 재사용, Precision/Recall/Hit Rate/NDCG)
+```
+
+> Funk SVD의 예측값 $\hat r_{ui}=p_u^Tq_i$은 정확한 평점이 아니라 **ranking score**로 사용합니다. Funk SVD의 loss 자체는 rating prediction error를 줄이는 방향이라 pairwise ranking을 직접 최적화하지는 않지만, 현재 프로젝트에서는 prediction score를 내림차순 정렬해 Top-N ranking에 활용하는 방식을 채택했습니다. Ranking을 직접 학습하는 방식(BPR)은 이후 확장 후보로 남겨두었습니다.
+
 ---
 
 # 🧩 Recommendation Identifier Flow
@@ -327,7 +384,7 @@ Cosine Similarity
 추천 Index → AppID → Game Name
 ```
 
-> Game Name은 중복될 수 있지만 AppID는 고유하므로, 내부 로직은 전부 **AppID 기준**으로 동작하도록 설계하였습니다. User-Based/Item-Based CF에서도 동일한 원칙을 적용하여, `user_to_idx` / `game_to_idx` / `idx_to_game`을 통해 ID ↔ 행렬 인덱스 변환을 일관되게 관리합니다.
+> Game Name은 중복될 수 있지만 AppID는 고유하므로, 내부 로직은 전부 **AppID 기준**으로 동작하도록 설계하였습니다. User-Based/Item-Based CF에서도 동일한 원칙을 적용하여, `user_to_idx` / `game_to_idx` / `idx_to_game`을 통해 ID ↔ 행렬 인덱스 변환을 일관되게 관리합니다. Funk SVD 역시 Surprise 내부의 raw id ↔ inner id 매핑을 통해 동일한 AppID 기준 식별 원칙을 유지합니다.
 
 ---
 
@@ -336,9 +393,11 @@ Cosine Similarity
 정량 지표만으로는 "왜 이런 결과가 나오는가"를 확인하기 어려워, 실제 게임을 직접 입력하고 추천 결과를 눈으로 확인하는 정성적 실험을 병행하였습니다.
 
 ### 발견 1 — 텍스트에 없는 특성은 포착 불가
+
 `Party Animals` 입력 시 장르/인원수는 유사하게 나왔지만, 기대했던 "동물 캐릭터" 테마는 전혀 반영되지 않음을 확인. TF-IDF는 Genres/Tags 등 텍스트 메타데이터에 명시된 정보만 학습하므로, 비주얼/테마적 특성은 원천적으로 포착할 수 없다는 한계를 확인하였습니다.
 
 ### 발견 2 — 장르 혼합 시 쏠림 현상
+
 카드/덱빌딩(`Slay the Spire`, `Balatro`) + 슈팅(`Counter-Strike 2`, `Left 4 Dead 2`)을 함께 입력했을 때, 추천 결과가 카드/덱빌딩 계열로 완전히 쏠리고 슈팅 계열은 단 하나도 포함되지 않는 현상을 확인하였습니다. 두 가지 가설을 세웠습니다:
 
 - **가설 1 (IDF 희귀도)**: 카드/덱빌딩류 태그(`deck-building`, `roguelike` 등)는 카탈로그 내 등장 빈도가 낮아 TF-IDF 가중치가 크게 작동하는 반면, FPS류 태그(`action`, `shooter`, `multiplayer`)는 흔해서 변별력이 낮았을 가능성
@@ -353,15 +412,18 @@ Cosine Similarity
 User-Based CF 첫 평가에서 Precision@10이 **0.6254**로, Content-Based(0.0268) 대비 비정상적으로 높게 나오는 것을 발견하고 원인을 진단하였습니다.
 
 ### 원인
+
 평가용 `interaction_matrix`가 Train/Test 미분리 원본 데이터로 생성되어, 평가 대상 유저 본인의 전체 데이터가 이웃 후보 풀에 그대로 남아있었습니다. 쿼리 벡터(Train 기준)가 자기 자신의 원본 벡터와 매우 높은 유사도(실측 0.7746, 전체 유저 중 1위)를 가져, 사실상 자기 자신이 최상위 이웃으로 선택되어 Test 정답이 예측 점수에 직접 새어 들어가는 구조였습니다.
 
 ### 수정 과정
+
 1. `recommend()`에 `exclude_user_idx` 파라미터를 추가하고, 유사도 계산 직후 자기 자신 유사도를 0으로 처리
 2. 1차 수정 후에도 지표가 완전히 동일하게 나오는 현상 발견 → 함수 내부 로직이 아니라 **호출 체인**을 추적
 3. 최종적으로 `run_evaluation()` 호출 시 `user_to_idx` 인자 자체를 넘기지 않아, `exclude_user_idx`가 항상 `None`으로 고정되어 제외 로직이 한 번도 실행되지 않았던 것을 확인
 4. `user_to_idx`를 명시적으로 전달하도록 수정 후 재평가 → Precision@10이 0.0545 수준(Content-Based와 유사한 자릿수)으로 정상화
 
 ### 교훈
+
 개별 함수(클래스 내부 로직, 평가 함수)는 모두 정확했음에도, 최상위 호출부에서 인자 하나가 누락되며 전체 로직이 무력화되었습니다. 여러 파일/함수로 나뉜 파이프라인에서는 내부 로직보다 **호출 체인(인자 전달 경로) 검증을 우선시**하는 디버깅 원칙(Outside-In)을 세우는 계기가 되었습니다.
 
 ---
@@ -404,6 +466,7 @@ Item-Based CF로 전환하기 전, "자기 자신과의 유사도를 계산하�
 - **Item-Based CF**: `A↔A=1.0`이라는 자명한 값이 항상 최고 유사도로 Top-K를 차지해, 자기 자신에게 다시 가중치를 부여하는 **trivial self-similarity** 문제
 
 두 모델 모두 다음 구현 원칙으로 통일했습니다:
+
 ```python
 similarities = cosine_similarity(...)
 similarities[self_idx] = 0
@@ -445,6 +508,51 @@ Item-Based CF를 기존 `userbase.py` 기반으로 구현하면서, 두 모델�
 - 동일 candidate로 모이는 similarity를 합산하는 Candidate Aggregation 구현
 - Train Item Exclusion 및 Positive Score Filtering 후 Top-N 반환
 - 기존 `recommend()` 출력 형식(`DataFrame["app_id"]`) 및 `exclude_user_idx` 인터페이스 유지 (Item-Based 내부에서는 미사용, 공통 evaluation pipeline 호환을 위해 유지)
+
+---
+
+# 🧮 Model-Based CF 전환 및 Funk SVD 구현
+
+Item-Based CF까지의 두 모델은 모두 이미 존재하는 interaction vector 간 유사도를 계산하는 Memory-based 방식이었습니다. Funk SVD부터는 User/Item의 특징 벡터 자체를 데이터로부터 학습하는 **Model-Based(Matrix Factorization)** 방식으로 전환했습니다.
+
+### Memory-based CF와의 핵심 차이
+
+| 구분 | Memory-based CF (User/Item-Based) | Model-Based CF (Funk SVD) |
+|---|---|---|
+| User/Item 표현 | 이미 존재하는 interaction 벡터 | 데이터로부터 학습된 latent vector |
+| 적합도 계산 | 존재하는 벡터 간 cosine similarity | 학습된 latent vector의 dot product |
+| 학습 단위 | 유저 평가 시점마다 개별 계산 | 전체 interaction을 한 번에 학습하는 Global Model |
+| Train/Test 구조 | 유저별 런타임 70:30 split으로 충분 | 평가 전 전체 데이터로 1회 학습 필요 → 별도 Global Split 설계 필요 |
+
+이 차이로 인해 평가 시점마다 사용자별로 70:30 split을 적용하던 기존 방식은 Funk SVD에 그대로 적용할 수 없다는 점을 직접 확인했고, 아래와 같이 Train/Test 구조를 재설계했습니다.
+
+### Global Train/Test 설계
+
+- 평가 대상 유저(interaction 10~78개, **666,781명**, interaction 12,564,053건): 70% Train / 30% Test
+- 그 외 유저: 100% Train
+- 결과: 전체 41,154,794건 = Train 37,113,471건 + Test 4,041,323건 (원본과 정확히 일치, 누락 없음 확인)
+- `random_state` 고정 시 interaction 개수가 같은 유저는 동일한 split position pattern을 가진다는 점을 이용해, `train_test_split()` 호출을 666,781회 → 최대 69회로 줄이는 최적화 적용 (전체 split 약 5초 소요)
+- 재사용을 위해 `data/split/mf_train.parquet`, `data/split/mf_test.parquet`로 저장
+
+### Funk SVD 모델 구현 (Surprise)
+
+```python
+from surprise import Dataset, Reader, SVD
+
+train_df["is_recommended"] = train_df["is_recommended"].astype(int)  # False→0, True→1
+reader = Reader(rating_scale=(0, 1))
+data = Dataset.load_from_df(train_df[["user_id", "app_id", "is_recommended"]], reader)
+trainset = data.build_full_trainset()
+
+model = SVD(n_factors=100, n_epochs=20, lr_all=0.005, reg_all=0.02, random_state=42)
+model.fit(trainset)
+```
+
+- `n_factors`: User/Item을 표현하는 latent 차원 수
+- `n_epochs` / `lr_all` / `reg_all`: 전체 반복 횟수 / SGD learning rate / regularization
+- `model.predict(user_id, app_id).est`: 학습된 latent vector 기반 예측 점수 → 이후 Top-N ranking에 사용
+
+10만 건 샘플(유저 98,022 / 아이템 9,360)과 Train 전체(37,113,471건)에서 학습 파이프라인이 정상 작동하는 것을 확인했습니다. Funk SVD의 예측값은 정확한 평점이 아니라 **ranking score**로 사용하기로 했으며, rating 기반 loss가 pairwise ranking을 직접 최적화하지는 않는다는 한계도 함께 확인했습니다(추후 BPR 탐색 여지로 남김).
 
 ---
 
@@ -496,6 +604,7 @@ Item-Based CF를 기존 `userbase.py` 기반으로 구현하면서, 두 모델�
 | **Item-Based** | **Micro** | **0.0783** | **0.0813** | **0.0797** | - | - |
 
 **핵심 발견**:
+
 - 모든 주요 지표가 User-Based 대비 상승 (Hit Rate@10 +0.1789, Macro Recall@10 약 2배 증가)
 - Item-Based는 400명 전원이 Top-10을 전부 채움(`n_recommended` 평균 10.0/10, 100%) — User-Based에서 발견된 candidate 부족 문제가 완전히 해소됨
 - `n_games ↔ precision` Pearson r=0.3387 (p<0.001)로 User-Based보다 상승. 다만 이는 Item-Based의 정보량 증가뿐 아니라 Train 크기 증가에 따른 test relevant item 수 증가(Precision@10의 metric ceiling 상승)가 함께 작용했을 가능성으로 해석 — 단일 원인으로 단정하지 않음
@@ -535,6 +644,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 
 - **Name = NaN metadata mismatch**: Item-Based CF 정성평가 과정에서 일부 추천 결과의 게임 이름이 NaN으로 조회되는 현상을 발견. 원인 분석 및 수정은 진행하지 않고 기록만 남김 (Model-Based 단계 이후 처리 예정)
 - **Party Animals 입력 시 빈 DataFrame 반환**: 정성평가 대상에서 제외하고 Stardew Valley로 대체. 원인 분석 보류
+- **`ModuleNotFoundError: No module named 'data_split'`**: `models/` 내부 파일을 직접 실행할 때 import 기준 경로가 달라져 발생. `python -m models.funk_svd`처럼 project root 기준으로 module을 실행하는 방식으로 해결 방향 확인 (근본적인 실행 구조 정리는 진행 중)
 
 ---
 
@@ -572,6 +682,15 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - Train Item Exclusion 및 Positive Score Filtering
 - User-Based와 동일한 `recommend()` 인터페이스 유지로 evaluation pipeline 공용화
 - 정성적 실험 (단일 취향 / 혼합 취향 / 단일 게임 확장성 6종)
+
+## Model-Based Collaborative Filtering (Funk SVD) — 구현 중
+
+- Global Train/Test Split 설계 및 최적화 (interaction count별 position 재사용)
+- 41,154,794건 interaction Parquet 저장/로드 (`data/split/mf_train.parquet`, `mf_test.parquet`)
+- Surprise `Dataset`/`Reader` 기반 데이터 변환 (`is_recommended` → 0/1 rating)
+- Funk SVD(`SVD`) 모델 학습 파이프라인 구현 및 정상 작동 확인
+- [진행 중] Candidate Generation, Seen-item Exclusion, Top-N Ranking 함수 구현
+- [진행 중] 기존 evaluation.py 파이프라인 연결
 
 ## Evaluation (공통)
 
@@ -661,12 +780,48 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - [x] 콘텐츠 기반에서 발견한 쏠림 현상이 협업 필터링에서도 재현되는지 비교 (방향은 반대로 재현됨)
 - [x] Item-Based CF 정성평가 (단일/혼합/단일게임 확장성 6개 실험)
 
-### Matrix Factorization (다음 단계)
+### Model-Based CF 학습 및 적용 순서
 
-- [ ] Model-Based CF baseline 모델 선정 (SVD 등 Matrix Factorization 계열 포함)
-- [ ] Matrix Factorization (SVD) 기본형 구현
-- [ ] 동일 evaluation pipeline으로 정량평가
+#### 1. Funk SVD — 핵심 Model-Based baseline
+
+- [x] Memory-based CF와 Model-Based CF(Global Model)의 학습 구조 차이 파악
+- [x] Global Train/Test Split 설계 및 대규모 split 성능 최적화 (interaction count별 position 재사용)
+- [x] Train/Test Parquet 저장·로드 구조 구축 (`data_split.py`)
+- [x] Surprise 기반 Funk SVD 기본형 구현
+- [x] User / Item latent factor 구조 및 prediction 흐름 이해
+- [x] 10만 건 샘플 및 전체 Train(37,113,471건) 학습 파이프라인 정상 작동 확인
+- [ ] Top-N 추천 함수 구현 (Candidate Generation, Seen-item Exclusion, Ranking)
+- [ ] 기존 evaluation pipeline에 연결하여 Precision@K / Recall@K / Hit Rate@K / NDCG@K 비교
 - [ ] 필요 시 간단한 정성평가
+- [ ] `n_factors`, regularization 등 핵심 파라미터만 소규모 실험
+
+#### 2. ALS — 짧은 비교 실험
+
+- [ ] Funk SVD와 동일한 latent factor 계열이지만 Alternating Least Squares로 학습되는 구조 확인
+- [ ] Sparse interaction에서의 학습 방식, 실행 시간, 추천 성능을 SVD와 비교
+- [ ] 현재 데이터의 실제 비추천(0)과 미관측 interaction을 구분하는 처리 방식 검토
+- [ ] 학습 중복도가 높거나 프로젝트 기간이 길어질 경우 baseline 비교까지만 진행 후 종료
+
+#### 3. Clustering — 사용자 집단 구조 분석
+
+- [ ] Sparse User-Item representation을 이용한 MiniBatch K-Means baseline 실험
+- [ ] Cluster별 대표 게임/선호 패턴을 확인하여 사용자 segmentation 가능성 분석
+- [ ] 추천 모델로서 의미가 있을 경우에만 동일 Top-K 지표로 추가 평가
+- [ ] 기존 User-KNN과 중복되는 Cluster-KNN, SVD embedding 기반 K-Means 확장은 이번 baseline 단계에서는 생략
+
+#### 4. BPR — 선택적 Ranking 확장
+
+- [ ] Rating prediction이 아닌 pairwise ranking 학습 구조 이해
+- [ ] Top-N 추천 목적에 맞춰 BPR baseline 구현 및 기존 SVD/ALS와 비교
+- [ ] 프로젝트 진행 속도, 모델 간 중복도, 앞선 실험 결과를 보고 실제 구현 여부 최종 결정
+- [ ] BPR까지 진행한 경우 추가 MF 변형(SVD++, NMF, PMF 등)은 확장하지 않고 모델 추가 종료
+
+### Model Comparison & Selection (Model-Based 이후)
+
+- [ ] Content-Based / User-Based / Item-Based / SVD / 진행한 Model-Based 모델을 동일 조건으로 비교
+- [ ] Accuracy 지표뿐 아니라 Sparsity, Coverage, Personalization, Explainability, 실행 시간 관점 비교
+- [ ] 성능과 역할이 가장 뚜렷한 1~2개 모델만 소규모 튜닝
+- [ ] 모든 모델을 반복적으로 튜닝하지 않고 Hybrid 단계로 전환
 
 ### MAP & Popularity Baseline (Model-Based 이후, Hybrid 이전 진행 예정)
 
@@ -693,7 +848,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 
 # 📊 Evaluation
 
-추천 시스템은 **Train Dataset**으로 학습하고 **Test Dataset**으로 평가합니다. 유저별 게임 수가 제각각이라 별도의 Train/Test 데이터셋 파일을 미리 만들어두지 않고, `sklearn.model_selection.train_test_split`을 유저 단위로 런타임에 적용하는 방식(Leave-N-Out, 70/30)을 사용합니다.
+추천 시스템은 **Train Dataset**으로 학습하고 **Test Dataset**으로 평가합니다. Memory-based CF(User/Item-Based)는 유저별 게임 수가 제각각이라 별도의 Train/Test 데이터셋 파일을 미리 만들어두지 않고, `sklearn.model_selection.train_test_split`을 유저 단위로 런타임에 적용하는 방식(Leave-N-Out, 70/30)을 사용합니다. 반면 Model-Based CF(Funk SVD)는 전체 사용자 interaction을 한 번에 학습하는 Global Model이므로, 평가 대상 유저(666,781명)는 70:30으로, 그 외 유저는 100% Train으로 분리한 별도의 Global Train/Test를 Parquet으로 저장해 재사용합니다.
 
 ### Recommendation Quality
 
@@ -711,6 +866,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - 통계적 신뢰 기준(95% 신뢰수준, ±5% 오차 → 구간당 약 385명) 고려한 표본 크기 설계
 - User-Based CF는 구간당 100명 규모로 1차 검증 후, Sparsity 한계가 뚜렷이 확인되어 대규모(400명) 재검증은 생략 — 리소스를 Item-Based CF 본 평가(구간당 100명, 총 400명)에 집중
 - Item-Based CF는 구간당 100명, 총 400명 규모로 본 평가 완료
+- Funk SVD는 Global Train/Test 구조로 별도 설계 (평가 대상 유저 666,781명 70:30 + 그 외 유저 100% Train), 본 평가는 Top-N 추천 함수 및 evaluation pipeline 연결 완료 후 진행 예정
 
 ### Qualitative Evaluation
 
@@ -723,7 +879,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - Content-Based Recommendation
 - User-Based Collaborative Filtering
 - Item-Based Collaborative Filtering
-- Model-Based CF / Matrix Factorization (설계 중)
+- Model-Based CF / Matrix Factorization (Funk SVD 학습 파이프라인 구현 완료, 평가 연결 진행 중)
 - Hybrid Recommendation (예정)
 - Popularity Baseline (예정)
 
@@ -732,6 +888,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - Execution Time
 - Memory Usage
 - Cache Hit / Miss (Parquet 캐싱 적용 후 로딩 속도 비교)
+- 대규모 Split 연산 최적화 (Python loop 66만 회 → interaction count별 최대 69회, 약 5초 소요)
 
 ---
 
@@ -764,7 +921,13 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 | Item-Based Collaborative Filtering | ✅ |
 | Item-Based CF 정량평가 (400명) | ✅ |
 | Item-Based CF 정성평가 | ✅ |
-| Matrix Factorization | 🚧 |
+| Model-Based CF Global Train/Test Split | ✅ |
+| Funk SVD 학습 파이프라인 구현 | ✅ |
+| Funk SVD Top-N 추천 & 평가 연결 | 🚧 |
+| ALS (짧은 비교 실험) | ⏳ |
+| Clustering (사용자 군집화 분석) | ⏳ |
+| BPR (상황에 따라 선택적 진행) | ⏳ |
+| Model Comparison & Selection | ⏳ |
 | MAP | 🚧 |
 | Popularity Baseline | 🚧 |
 | Hybrid Recommendation | 🚧 |
@@ -774,7 +937,7 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 
 # 📌 Project Status
 
-**Current Version:** `V2.5 - Item-Based CF 구현·정량평가·정성평가 완료`
+**Current Version:** `V2.7 - Model-Based CF(Funk SVD) 학습 파이프라인 구현 완료, 평가 연결 진행 중`
 
 ### Completed
 
@@ -801,21 +964,23 @@ Left 4 Dead 2 입력 시 좀비/공포/협동이라는 세부 특징은 추천 �
 - **Item-Based CF 구현 완료** (행별 Top-K, Candidate Aggregation, Train Item Exclusion, Top-N 반환)
 - **Item-Based CF 정량평가 완료** (400명, User-Based 대비 전 지표 상승, Sparsity 강건성 확인)
 - **Item-Based CF 정성평가 완료** (6개 실험, Content-Based와의 정반대 쏠림 방향 발견, Hybrid 설계 필요성 확인)
+- **Model-Based CF Global Train/Test Split 설계 및 저장 완료** (41,154,794건, 66만 회 → 최대 69회 최적화)
+- **Surprise 기반 Funk SVD 학습 파이프라인 구현 및 정상 작동 확인** (10만 건 샘플 + 전체 Train 규모)
 
 ### In Progress
 
-- Model-Based CF (Matrix Factorization) baseline 모델 선정 및 설계
+- **Funk SVD 학습 데이터 규모 최종 결정**
+- **Funk SVD 기반 Top-N 추천 함수 구현 (Candidate Generation, Seen-item Exclusion, Ranking)**
+- **기존 evaluation.py 파이프라인에 Funk SVD 연결 및 정량/정성 비교**
 
 ### Next Milestone
 
-➡️ Model-Based CF (Matrix Factorization / SVD) 구현
-
-➡️ 동일 evaluation pipeline으로 Content-Based / User-Based / Item-Based / Model-Based 비교
-
+➡️ Funk SVD Top-N 추천 및 evaluation pipeline 연결 → 정량/정성 비교
+➡️ ALS 짧은 비교 실험 (SVD와 학습 방식·성능·실행 시간 비교)
+➡️ Clustering 사용자 군집화/세그먼트 분석
+➡️ BPR은 Top-N Ranking 확장 후보로 유지하되, 프로젝트 진행 속도와 앞선 실험 결과를 보고 실제 구현 여부 결정
+➡️ Model-Based 단계 종료 후 전체 모델 비교 및 최상위 1~2개 모델만 소규모 튜닝
 ➡️ MAP@K 구현
-
 ➡️ Popularity Baseline 및 Popularity Bias / Coverage 분석
-
 ➡️ Hybrid Recommendation (모델별 failure mode 및 쏠림 방향 차이 기반 설계)
-
 ➡️ Web Service Deployment
