@@ -19,4 +19,4 @@ __pycache__/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.dbmodels/funk_svd_model.pkl

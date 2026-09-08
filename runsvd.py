@@ -13,25 +13,22 @@ print("Test :", test_df.shape)
 
 
 # ==========================================
-# 2. 우선 작은 샘플로 정상 작동 확인
+# 2. 전체 Train 데이터 확인
 # ==========================================
 
-train_sample = train_df.sample(
-    n=100_000,
-    random_state=42
-)
+print("\n===== Train 데이터 정보 =====")
+print("사용자 수:", train_df["user_id"].nunique())
+print("게임 수:", train_df["app_id"].nunique())
+print("\nis_recommended 분포:")
+print(train_df["is_recommended"].value_counts())
 
 
 # ==========================================
-# 3. Funk SVD 학습
+# 3. 전체 Train 데이터로 Funk SVD 학습
 # ==========================================
 
 model = train_funk_svd(
-    train_sample
+    train_df
 )
 
-
-
-print(train_sample["user_id"].nunique())
-print(train_sample["app_id"].nunique())
-print(train_sample["is_recommended"].value_counts())
+print("\n전체 Train 데이터 Funk SVD 학습 완료")

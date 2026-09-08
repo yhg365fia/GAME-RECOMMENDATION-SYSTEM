@@ -260,3 +260,340 @@ def evaluate_pipeline(recommender, user_history, lower_bound=10, upper_bound=78,
     summary = print_evaluation_report(eval_df, top_n)
     return eval_df, summary
 
+
+
+
+
+def build_mf_user_review_groups(
+    train_df,
+    test_df,
+    lower_bound=10,
+    upper_bound=78,
+    bins=None,
+    labels=None
+):
+    """
+    이미 만들어진 MF Train/Test를 기준으로
+    사용자별 전체 interaction 수를 계산한다.
+    """
+
+    train_counts = (
+        train_df
+        .groupby("user_id")
+        .size()
+    )
+
+    test_counts = (
+        test_df
+        .groupby("user_id")
+        .size()
+    )
+
+    # Train + Test = 원래 사용자의 전체 interaction 수
+    total_counts = (
+        train_counts
+        .add(test_counts, fill_value=0)
+        .astype(int)
+        .reset_index(name="n_games")
+    )
+
+    eligible_users = total_counts[
+        (total_counts["n_games"] >= lower_bound)
+        &
+        (total_counts["n_games"] <= upper_bound)
+    ].copy()
+
+    if bins is None:
+        bins = [9, 15, 25, 45, 78]
+
+    if labels is None:
+        labels = [
+            "10-15개",
+            "16-25개",
+            "26-45개",
+            "46-78개"
+        ]
+
+    eligible_users["review_group"] = pd.cut(
+        eligible_users["n_games"],
+        bins=bins,
+        labels=labels
+    )
+
+    print(
+        eligible_users[
+            "review_group"
+        ].value_counts().sort_index()
+    )
+
+    return eligible_users
+
+def evaluate_mf_user(
+    recommender,
+    user_id,
+    train_app_ids,
+    test_app_ids,
+    top_n=10
+):
+
+    if len(train_app_ids) == 0 or len(test_app_ids) == 0:
+        return None
+
+
+    # ==========================================
+    # SVD 추천
+    # ==========================================
+
+    result = recommender.recommend(
+        user_id=user_id,
+        app_id_list=train_app_ids,
+        top_n=top_n
+    )
+
+
+    if result is None or len(result) == 0:
+        return None
+
+
+    # 추천 순서 유지
+    recommended_list = (
+        result["app_id"].tolist()
+    )
+
+    recommended_ids = set(
+        recommended_list
+    )
+
+    test_ids = set(
+        test_app_ids
+    )
+
+
+    # ==========================================
+    # Hits
+    # ==========================================
+
+    hits = len(
+        recommended_ids & test_ids
+    )
+
+
+    # ==========================================
+    # NDCG
+    # ==========================================
+
+    dcg = 0.0
+
+    for rank, app_id in enumerate(
+        recommended_list,
+        start=1
+    ):
+
+        relevance = (
+            1 if app_id in test_ids else 0
+        )
+
+        dcg += (
+            relevance
+            / np.log2(rank + 1)
+        )
+
+
+    ideal_hits = min(
+        len(test_ids),
+        top_n
+    )
+
+
+    idcg = sum(
+        1 / np.log2(rank + 1)
+        for rank
+        in range(1, ideal_hits + 1)
+    )
+
+
+    ndcg = (
+        dcg / idcg
+        if idcg > 0
+        else 0.0
+    )
+
+
+    # ==========================================
+    # Precision / Recall
+    # ==========================================
+
+    precision = (
+        hits / len(recommended_ids)
+        if len(recommended_ids) > 0
+        else 0.0
+    )
+
+    recall = (
+        hits / len(test_ids)
+        if len(test_ids) > 0
+        else 0.0
+    )
+
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "hits": hits,
+        "hit": 1 if hits > 0 else 0,
+        "ndcg": ndcg,
+        "n_recommended": len(recommended_ids),
+        "n_test": len(test_ids),
+    }
+
+def run_mf_evaluation(
+    recommender,
+    train_df,
+    test_df,
+    sampled_users,
+    top_n=10,
+    positive_only=True
+):
+
+    sampled_ids = set(
+        sampled_users["user_id"]
+    )
+
+
+    # ==========================================
+    # 평가할 사용자만 추출
+    # ==========================================
+
+    target_train = train_df[
+        train_df["user_id"].isin(
+            sampled_ids
+        )
+    ][
+        ["user_id", "app_id"]
+    ]
+
+
+    target_test = test_df[
+        test_df["user_id"].isin(
+            sampled_ids
+        )
+    ][
+        [
+            "user_id",
+            "app_id",
+            "is_recommended"
+        ]
+    ]
+
+
+    # ==========================================
+    # 실제 좋아한 게임만 Test 정답으로 사용
+    # ==========================================
+
+    if positive_only:
+
+        target_test = target_test[
+            target_test[
+                "is_recommended"
+            ] == True
+        ]
+
+
+    # ==========================================
+    # user -> app_id 목록
+    # ==========================================
+
+    train_by_user = (
+        target_train
+        .groupby("user_id")["app_id"]
+        .apply(list)
+        .to_dict()
+    )
+
+
+    test_by_user = (
+        target_test
+        .groupby("user_id")["app_id"]
+        .apply(list)
+        .to_dict()
+    )
+
+
+    # ==========================================
+    # 사용자별 평가
+    # ==========================================
+
+    results = []
+    skipped = 0
+
+    start = time.time()
+
+
+    for row in sampled_users.itertuples(
+        index=False
+    ):
+
+        user_id = row.user_id
+
+
+        train_ids = train_by_user.get(
+            user_id,
+            []
+        )
+
+        test_ids = test_by_user.get(
+            user_id,
+            []
+        )
+
+
+        metrics = evaluate_mf_user(
+            recommender=recommender,
+            user_id=user_id,
+            train_app_ids=train_ids,
+            test_app_ids=test_ids,
+            top_n=top_n
+        )
+
+
+        if metrics is None:
+
+            skipped += 1
+            continue
+
+
+        metrics["user_id"] = user_id
+        metrics["n_games"] = row.n_games
+
+        results.append(
+            metrics
+        )
+
+
+    print(
+        f"평가 완료: "
+        f"유저 {len(results)}명 "
+        f"(스킵 {skipped}명), "
+        f"소요 시간 "
+        f"{time.time() - start:.1f}초"
+    )
+
+
+    eval_df = pd.DataFrame(
+        results
+    )
+
+
+    eval_df = eval_df.merge(
+        sampled_users[
+            [
+                "user_id",
+                "review_group"
+            ]
+        ],
+        on="user_id",
+        how="left"
+    )
+
+
+    return eval_df
