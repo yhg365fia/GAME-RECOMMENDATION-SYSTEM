@@ -172,7 +172,7 @@ def main():
         lr_all=0.005,
         reg_all=0.02,
         random_state=42,
-        model_path="models/funk_svd_model.pkl"
+        model_path="models/funk_svd_unbiased_model.pkl"
     )
 
 
@@ -422,7 +422,41 @@ def main():
         )
     )
 
+    # ==========================================
+    # [진단 1] 추천 게임의 학습 데이터 통계
+    # ==========================================
 
+    item_stats = (
+        train_df
+        .groupby("app_id")
+        .agg(
+            interaction_count=("user_id", "size"),
+            true_count=("is_recommended", "sum"),
+            true_ratio=("is_recommended", "mean")
+        )
+        .reset_index()
+    )
+
+    diagnosis_result = (
+        result[
+            ["app_id", "Name"]
+        ]
+        .merge(
+            item_stats,
+            on="app_id",
+            how="left"
+        )
+    )
+
+    print(
+        "\n===== 추천 게임 학습 통계 ====="
+    )
+
+    print(
+        diagnosis_result.to_string(
+            index=False
+        )
+    )
     # ==========================================
     # [기존 평가 시스템]
     # ==========================================
@@ -589,9 +623,111 @@ def main():
         test_df=test_df,
         sampled_users=sampled_users,
         top_n=10,
-        positive_only=True
+        positive_only=False
     )
 
+    # ==========================================
+    # [진단 2] 사용자별 추천 게임 반복 빈도 확인.
+    # ==========================================
+
+    from collections import Counter
+
+
+    # sampled user의 Train interaction 정리
+    sampled_ids = set(
+        sampled_users["user_id"]
+    )
+
+    target_train = train_df[
+        train_df["user_id"].isin(
+            sampled_ids
+        )
+    ]
+
+    train_by_user = (
+        target_train
+        .groupby("user_id")["app_id"]
+        .apply(list)
+        .to_dict()
+    )
+
+
+    # 모든 추천 결과 수집
+    recommend_counter = Counter()
+
+    for user_id in sampled_ids:
+
+        played_app_ids = train_by_user.get(
+            user_id,
+            []
+        )
+
+        if len(played_app_ids) == 0:
+            continue
+
+        rec_result = recommender.recommend(
+            user_id=user_id,
+            app_id_list=played_app_ids,
+            top_n=10
+        )
+
+        if rec_result is None or len(rec_result) == 0:
+            continue
+
+        recommend_counter.update(
+            rec_result["app_id"].tolist()
+        )
+
+
+    # 가장 많이 추천된 게임
+    top_common = pd.DataFrame(
+        recommend_counter.most_common(30),
+        columns=[
+            "app_id",
+            "recommend_count"
+        ]
+    )
+
+
+    # 게임 이름 추가
+    top_common = top_common.merge(
+        meta[
+            ["app_id", "Name"]
+        ],
+        on="app_id",
+        how="left"
+    )
+
+
+    # Train 통계 추가
+    item_stats = (
+        train_df
+        .groupby("app_id")
+        .agg(
+            interaction_count=("user_id", "size"),
+            true_count=("is_recommended", "sum"),
+            true_ratio=("is_recommended", "mean")
+        )
+        .reset_index()
+    )
+
+
+    top_common = top_common.merge(
+        item_stats,
+        on="app_id",
+        how="left"
+    )
+
+
+    print(
+        "\n===== 여러 사용자에게 반복 추천되는 게임 TOP 30 ====="
+    )
+
+    print(
+        top_common.to_string(
+            index=False
+        )
+    )
 
     # ------------------------------------------
     # 7-4. 평가 결과 출력

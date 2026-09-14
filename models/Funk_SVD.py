@@ -98,7 +98,8 @@ class FunkSVDRecommender:
             n_epochs=self.n_epochs,
             lr_all=self.lr_all,
             reg_all=self.reg_all,
-            random_state=self.random_state
+            random_state=self.random_state,
+            biased=False
         )
 
         print("Funk SVD 학습 시작...")
