@@ -19,5 +19,8 @@ __pycache__/
 
 # OS
 .DS_Store
-Thumbs.dbmodels/funk_svd_model.pkl
+Thumbs.db
+
+# Models
 models/*.pkl
+models/*.npz
