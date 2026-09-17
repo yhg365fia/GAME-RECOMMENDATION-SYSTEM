@@ -24,3 +24,4 @@ Thumbs.db
 # Models
 models/*.pkl
 models/*.npzmodels/**/*.npz
+models/bpr_grid/
