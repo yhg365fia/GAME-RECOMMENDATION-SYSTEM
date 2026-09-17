@@ -23,4 +23,4 @@ Thumbs.db
 
 # Models
 models/*.pkl
-models/*.npz
+models/*.npzmodels/**/*.npz
