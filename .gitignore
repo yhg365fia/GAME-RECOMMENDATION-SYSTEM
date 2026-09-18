@@ -21,7 +21,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Models
-models/*.pkl
-models/*.npzmodels/**/*.npz
-models/bpr_grid/
+# Saved Models
+models/saved_model/
