@@ -1,13 +1,11 @@
-# hybrid_arctech_experiment/exp_b_multi_retriever.py
-
 import sys
-import time
+import gc
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from scipy.sparse import csr_matrix
+from scipy.sparse import load_npz, csr_matrix
 from sklearn.preprocessing import normalize
 
 from implicit.cpu.bpr import BayesianPersonalizedRanking
@@ -24,28 +22,37 @@ if str(ROOT) not in sys.path:
 
 
 from data_split import load_mf_split
-from evaluation import run_mf_evaluation, print_evaluation_report
+
+from evaluation import (
+    run_mf_evaluation,
+    print_evaluation_report,
+)
 
 from models.itembase import build_interaction_matrix
+
 from models.content_base import ContentBasedRecommender
+
+from models.bpr import ImplicitBPRAdapter
 
 
 # =========================================================
 # Experiment Config
 # =========================================================
 
+# 각 Retriever 후보 수
 ITEM_CANDIDATE_N = 30
-USER_CANDIDATE_N = 30
+BPR_CANDIDATE_N = 30
 CONTENT_CANDIDATE_N = 30
 
-ITEM_K = 30
-USER_K = 30
-
+# 최종 추천 수
 TOP_N = 10
+
+# 기존 Item-Based 설정
+ITEM_K = 30
 
 
 # =========================================================
-# Paths
+# Path
 # =========================================================
 
 SAVED_MODEL_DIR = (
@@ -65,12 +72,14 @@ RESULT_DIR.mkdir(
 )
 
 
+# 기존 400명 평가 사용자
 SAMPLED_USERS_PATH = (
     RESULT_DIR
     / "hybrid_sampled_users.csv"
 )
 
 
+# Case 1 결과
 CASE1_EVAL_PATH = (
     RESULT_DIR
     / "hybrid_exp_a_bpr_rerank_eval.csv"
@@ -78,7 +87,7 @@ CASE1_EVAL_PATH = (
 
 
 # =========================================================
-# BPR
+# BPR Files
 # =========================================================
 
 BPR_MODEL_NAME = (
@@ -89,9 +98,14 @@ BPR_MAPPING_NAME = (
     "implicit_bpr_mapping.npz"
 )
 
+BPR_USER_ITEMS_NAMES = [
+    "implicit_bpr_user_items.npz",
+    "bpr_user_items.npz",
+]
+
 
 # =========================================================
-# Result Paths
+# Result Files
 # =========================================================
 
 EVAL_PATH = (
@@ -112,11 +126,6 @@ GROUP_PATH = (
 CANDIDATE_PATH = (
     RESULT_DIR
     / "hybrid_exp_b_candidate_diagnostics.csv"
-)
-
-CANDIDATE_GROUP_PATH = (
-    RESULT_DIR
-    / "hybrid_exp_b_candidate_group_summary.csv"
 )
 
 POOL_PATH = (
@@ -159,8 +168,26 @@ def find_file(base_dir, filename):
     return matches[0]
 
 
+def find_first_file(
+    base_dir,
+    filenames,
+):
+
+    for filename in filenames:
+
+        path = find_file(
+            base_dir,
+            filename,
+        )
+
+        if path is not None:
+            return path
+
+    return None
+
+
 # =========================================================
-# BPR 파일 찾기
+# BPR File Load
 # =========================================================
 
 def find_bpr_files():
@@ -168,6 +195,10 @@ def find_bpr_files():
     print(
         "\n===== BPR 저장 파일 탐색 ====="
     )
+
+    # -----------------------------------------------------
+    # Model
+    # -----------------------------------------------------
 
     model_path = find_file(
         SAVED_MODEL_DIR,
@@ -177,9 +208,14 @@ def find_bpr_files():
     if model_path is None:
 
         raise FileNotFoundError(
-            f"\nBPR 모델 없음:\n{BPR_MODEL_NAME}"
+            "\nBPR 모델 없음:\n"
+            f"{BPR_MODEL_NAME}"
         )
 
+
+    # -----------------------------------------------------
+    # Mapping
+    # -----------------------------------------------------
 
     mapping_path = find_file(
         SAVED_MODEL_DIR,
@@ -193,38 +229,77 @@ def find_bpr_files():
             BPR_MAPPING_NAME,
         )
 
-
     if mapping_path is None:
 
         raise FileNotFoundError(
-            f"\nBPR Mapping 없음:\n{BPR_MAPPING_NAME}"
+            "\nBPR Mapping 없음:\n"
+            f"{BPR_MAPPING_NAME}"
+        )
+
+
+    # -----------------------------------------------------
+    # User Items
+    # -----------------------------------------------------
+
+    user_items_path = find_first_file(
+        SAVED_MODEL_DIR,
+        BPR_USER_ITEMS_NAMES,
+    )
+
+    if user_items_path is None:
+
+        user_items_path = find_first_file(
+            ROOT / "models",
+            BPR_USER_ITEMS_NAMES,
+        )
+
+    if user_items_path is None:
+
+        raise FileNotFoundError(
+            "\nBPR 후보 생성에 필요한 "
+            "user_items matrix가 없습니다.\n"
+            "찾은 파일명 후보:\n"
+            + "\n".join(
+                BPR_USER_ITEMS_NAMES
+            )
         )
 
 
     print(
-        "BPR Model:",
-        model_path,
+        "\nBPR Model:"
     )
+    print(model_path)
 
     print(
-        "BPR Mapping:",
-        mapping_path,
+        "\nBPR Mapping:"
     )
+    print(mapping_path)
+
+    print(
+        "\nBPR User Items:"
+    )
+    print(user_items_path)
 
 
     return (
         model_path,
         mapping_path,
+        user_items_path,
     )
 
 
 # =========================================================
 # Content Metadata
 #
-# 기존 Content-Based 조건:
+# 기존 Content-Based 전처리:
 #
-# Genres + Tags + Categories
+# Genres
+# + Tags
+# + Categories
+#
 # -> combined_features
+#
+# 기존 모델 조건을 그대로 유지한다.
 # =========================================================
 
 def load_content_meta():
@@ -253,7 +328,6 @@ def load_content_meta():
 
     selected_path = None
 
-
     for path in candidate_paths:
 
         if path.exists():
@@ -265,15 +339,22 @@ def load_content_meta():
     if selected_path is None:
 
         raise FileNotFoundError(
-            "games metadata 파일을 찾을 수 없습니다."
+            "\ngames metadata 파일을 찾을 수 없습니다."
         )
 
 
     print(
-        "\nContent metadata:",
-        selected_path,
+        "\nContent metadata:"
     )
 
+    print(
+        selected_path
+    )
+
+
+    # =====================================================
+    # 1. Metadata Load
+    # =====================================================
 
     meta = pd.read_parquet(
         selected_path
@@ -282,13 +363,13 @@ def load_content_meta():
 
     print(
         "원본 Metadata:",
-        meta.shape,
+        meta.shape
     )
 
 
-    # -----------------------------------------------------
-    # 컬럼명 호환
-    # -----------------------------------------------------
+    # =====================================================
+    # 2. Column 이름 호환
+    # =====================================================
 
     rename_map = {}
 
@@ -298,7 +379,10 @@ def load_content_meta():
         and
         "app_id" not in meta.columns
     ):
-        rename_map["AppID"] = "app_id"
+
+        rename_map[
+            "AppID"
+        ] = "app_id"
 
 
     if (
@@ -306,7 +390,10 @@ def load_content_meta():
         and
         "Genres" not in meta.columns
     ):
-        rename_map["genres"] = "Genres"
+
+        rename_map[
+            "genres"
+        ] = "Genres"
 
 
     if (
@@ -314,7 +401,10 @@ def load_content_meta():
         and
         "Tags" not in meta.columns
     ):
-        rename_map["tags"] = "Tags"
+
+        rename_map[
+            "tags"
+        ] = "Tags"
 
 
     if (
@@ -322,7 +412,10 @@ def load_content_meta():
         and
         "Categories" not in meta.columns
     ):
-        rename_map["categories"] = "Categories"
+
+        rename_map[
+            "categories"
+        ] = "Categories"
 
 
     if (
@@ -330,7 +423,10 @@ def load_content_meta():
         and
         "Name" not in meta.columns
     ):
-        rename_map["name"] = "Name"
+
+        rename_map[
+            "name"
+        ] = "Name"
 
 
     if rename_map:
@@ -340,7 +436,12 @@ def load_content_meta():
         )
 
 
+    # =====================================================
+    # 3. 필수 컬럼 확인
+    # =====================================================
+
     required_columns = [
+
         "app_id",
         "Name",
         "Genres",
@@ -350,8 +451,11 @@ def load_content_meta():
 
 
     missing = [
+
         col
+
         for col in required_columns
+
         if col not in meta.columns
     ]
 
@@ -359,53 +463,99 @@ def load_content_meta():
     if missing:
 
         print(
-            "\n현재 metadata columns:"
+            "\n현재 games.parquet 컬럼:"
         )
 
         print(
-            list(meta.columns)
+            list(
+                meta.columns
+            )
         )
+
 
         raise ValueError(
-            f"\nContent-Based 필수 컬럼 없음:\n{missing}"
+            "\nContent-Based에 필요한 컬럼이 없습니다:\n"
+            f"{missing}"
         )
 
 
-    # -----------------------------------------------------
-    # 기존 Content 전처리
-    # -----------------------------------------------------
+    # =====================================================
+    # 4. 필요한 컬럼만 선택
+    # =====================================================
+
+    selected_columns = [
+
+        "app_id",
+        "Name",
+        "Genres",
+        "Tags",
+        "Categories",
+    ]
+
+
+    if "About the game" in meta.columns:
+
+        selected_columns.append(
+            "About the game"
+        )
+
 
     meta = meta[
-        required_columns
+        selected_columns
     ].copy()
 
 
+    # =====================================================
+    # 5. 결측값 처리
+    # =====================================================
+
     meta = meta.dropna(
-        subset=["Name"]
+        subset=[
+            "Name"
+        ]
     )
 
 
+    text_columns = [
+
+        "Genres",
+        "Tags",
+        "Categories",
+    ]
+
+
+    if "About the game" in meta.columns:
+
+        text_columns.append(
+            "About the game"
+        )
+
+
     meta[
-        [
-            "Genres",
-            "Tags",
-            "Categories",
-        ]
+        text_columns
     ] = (
+
         meta[
-            [
-                "Genres",
-                "Tags",
-                "Categories",
-            ]
+            text_columns
         ]
+
         .fillna("")
     )
 
 
-    meta["combined_features"] = (
+    # =====================================================
+    # 6. 기존 combined_features 생성
+    #
+    # Genres + Tags + Categories
+    # =====================================================
 
-        meta["Genres"]
+    meta[
+        "combined_features"
+    ] = (
+
+        meta[
+            "Genres"
+        ]
         .astype(str)
         .str.replace(
             ",",
@@ -413,9 +563,15 @@ def load_content_meta():
             regex=False,
         )
 
-        + " "
+        +
 
-        + meta["Tags"]
+        " "
+
+        +
+
+        meta[
+            "Tags"
+        ]
         .astype(str)
         .str.replace(
             ",",
@@ -423,9 +579,15 @@ def load_content_meta():
             regex=False,
         )
 
-        + " "
+        +
 
-        + meta["Categories"]
+        " "
+
+        +
+
+        meta[
+            "Categories"
+        ]
         .astype(str)
         .str.replace(
             ",",
@@ -435,16 +597,29 @@ def load_content_meta():
     )
 
 
+    # =====================================================
+    # 7. app_id 중복 제거
+    # =====================================================
+
     meta = (
+
         meta
+
         .drop_duplicates(
-            subset=["app_id"]
+            subset=[
+                "app_id"
+            ]
         )
+
         .reset_index(
             drop=True
         )
     )
 
+
+    # =====================================================
+    # 8. Content Model용 컬럼만 반환
+    # =====================================================
 
     meta = meta[
         [
@@ -457,7 +632,12 @@ def load_content_meta():
 
     print(
         "Content preprocessing 완료:",
-        meta.shape,
+        meta.shape
+    )
+
+
+    print(
+        "combined_features 생성 완료"
     )
 
 
@@ -468,9 +648,12 @@ def load_content_meta():
 # Utility
 # =========================================================
 
-def unique_preserve_order(values):
+def unique_preserve_order(
+    values,
+):
 
     seen = set()
+
     result = []
 
 
@@ -479,26 +662,44 @@ def unique_preserve_order(values):
         if value in seen:
             continue
 
-        seen.add(value)
-        result.append(value)
+        seen.add(
+            value
+        )
+
+        result.append(
+            value
+        )
 
 
     return result
 
 
 # =========================================================
-# Optimized Item-Based CF
+# Optimized Item-Based
 #
-# 기존 모델 조건 유지:
+# 기존:
 #
-# - cosine similarity
-# - source item별 k=30
-# - positive similarity만
-# - similarity 합산
+# cosine_similarity(
+#     source_items,
+#     all_items
+# )
+#
+# 를 사용자마다 반복
+#
 #
 # 최적화:
 #
-# source item의 Top-K neighbor를 한 번만 계산 후 cache
+# Item vector normalization 1회
+# +
+# source item별 Top-K neighbor cache
+#
+#
+# 모델 조건:
+#
+# cosine similarity 동일
+# positive similarity만 사용
+# k=30 동일
+# 합산 방식 동일
 # =========================================================
 
 class CachedItemBasedCFRecommender:
@@ -511,8 +712,13 @@ class CachedItemBasedCFRecommender:
         k=30,
     ):
 
-        self.game_to_idx = game_to_idx
-        self.idx_to_game = idx_to_game
+        self.game_to_idx = (
+            game_to_idx
+        )
+
+        self.idx_to_game = (
+            idx_to_game
+        )
 
         self.k = k
 
@@ -525,10 +731,6 @@ class CachedItemBasedCFRecommender:
             interaction_matrix
             .T
             .tocsr()
-            .astype(
-                np.float64,
-                copy=False,
-            )
         )
 
 
@@ -537,15 +739,24 @@ class CachedItemBasedCFRecommender:
         )
 
 
-        self.item_matrix = (
-            normalize(
-                item_matrix,
-                norm="l2",
-                axis=1,
+        # sklearn cosine_similarity와 같은
+        # L2 normalization + dot product 구조
+
+        item_matrix = (
+            item_matrix
+            .astype(
+                np.float64,
                 copy=False,
             )
-            .tocsr()
         )
+
+
+        self.item_matrix = normalize(
+            item_matrix,
+            norm="l2",
+            axis=1,
+            copy=False,
+        ).tocsr()
 
 
         print(
@@ -558,16 +769,21 @@ class CachedItemBasedCFRecommender:
         )
 
 
+        # source item index
+        # ->
+        # (top-k neighbor index, similarity)
+
         self.neighbor_cache = {}
 
 
         self.cache_hit_count = 0
+
         self.cache_miss_count = 0
 
 
-    # -----------------------------------------------------
-    # 아직 계산하지 않은 source item만 cosine 계산
-    # -----------------------------------------------------
+    # =====================================================
+    # Missing Neighbor 계산
+    # =====================================================
 
     def _cache_missing_neighbors(
         self,
@@ -593,13 +809,23 @@ class CachedItemBasedCFRecommender:
 
 
         self.cache_hit_count += (
-            len(unique_indices)
+
+            len(
+                unique_indices
+            )
+
             -
-            len(missing_indices)
+
+            len(
+                missing_indices
+            )
         )
 
 
-        if len(missing_indices) == 0:
+        if len(
+            missing_indices
+        ) == 0:
+
             return
 
 
@@ -608,21 +834,34 @@ class CachedItemBasedCFRecommender:
         )
 
 
+        # -------------------------------------------------
+        # normalized item dot normalized item
+        # = cosine similarity
+        # -------------------------------------------------
+
         source_matrix = (
+
             self.item_matrix[
                 missing_indices
             ]
+
         )
 
 
-        # normalized dot product = cosine similarity
-
         sims = (
+
             source_matrix
+
             @
+
             self.item_matrix.T
+
         ).tocsr()
 
+
+        # =================================================
+        # Source Item별 Top-K Neighbor
+        # =================================================
 
         for local_row, item_idx in enumerate(
             missing_indices
@@ -633,12 +872,16 @@ class CachedItemBasedCFRecommender:
             )
 
 
-            row_indices = row.indices
-            row_data = row.data
+            row_indices = (
+                row.indices
+            )
+
+            row_data = (
+                row.data
+            )
 
 
-            # 기존 조건:
-            # self similarity 제외
+            # self 제외
             # positive similarity만 사용
 
             valid_mask = (
@@ -648,6 +891,7 @@ class CachedItemBasedCFRecommender:
                 &
 
                 (row_data > 0)
+
             )
 
 
@@ -665,11 +909,14 @@ class CachedItemBasedCFRecommender:
             )
 
 
-            if len(positive_data) == 0:
+            if len(
+                positive_data
+            ) == 0:
 
                 self.neighbor_cache[
                     item_idx
                 ] = (
+
                     np.array(
                         [],
                         dtype=np.int64,
@@ -686,7 +933,9 @@ class CachedItemBasedCFRecommender:
 
             k = min(
                 self.k,
-                len(positive_data),
+                len(
+                    positive_data
+                ),
             )
 
 
@@ -696,23 +945,33 @@ class CachedItemBasedCFRecommender:
             )[-k:]
 
 
+            top_indices = (
+                positive_indices[
+                    top_k_pos
+                ]
+            )
+
+
+            top_sims = (
+                positive_data[
+                    top_k_pos
+                ]
+            )
+
+
             self.neighbor_cache[
                 item_idx
             ] = (
 
-                positive_indices[
-                    top_k_pos
-                ].copy(),
+                top_indices.copy(),
 
-                positive_data[
-                    top_k_pos
-                ].copy(),
+                top_sims.copy(),
             )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # Recommend
-    # -----------------------------------------------------
+    # =====================================================
 
     def recommend(
         self,
@@ -720,6 +979,10 @@ class CachedItemBasedCFRecommender:
         top_n=10,
         exclude_user_idx=None,
     ):
+
+        # -------------------------------------------------
+        # Train에 있는 게임만
+        # -------------------------------------------------
 
         col_idx = [
 
@@ -732,15 +995,24 @@ class CachedItemBasedCFRecommender:
             if app_id
             in
             self.game_to_idx
+
         ]
 
 
-        if len(col_idx) == 0:
+        if len(
+            col_idx
+        ) == 0:
 
             return pd.DataFrame(
-                columns=["app_id"]
+                columns=[
+                    "app_id"
+                ]
             )
 
+
+        # -------------------------------------------------
+        # 필요한 Source Item만 최초 1회 계산
+        # -------------------------------------------------
 
         self._cache_missing_neighbors(
             col_idx
@@ -753,8 +1025,11 @@ class CachedItemBasedCFRecommender:
         )
 
 
+        # -------------------------------------------------
         # 기존 Item-Based:
+        #
         # source item별 Top-K similarity 합산
+        # -------------------------------------------------
 
         for item_idx in col_idx:
 
@@ -771,28 +1046,40 @@ class CachedItemBasedCFRecommender:
             ] += neighbor_sims
 
 
-        # 이미 interaction한 게임 제외
+        # -------------------------------------------------
+        # 이미 상호작용한 게임 제외
+        # -------------------------------------------------
 
         predicted_scores[
             col_idx
         ] = -np.inf
 
 
+        # -------------------------------------------------
+        # score > 0만 후보
+        # -------------------------------------------------
+
         valid_idx = np.where(
             predicted_scores > 0
         )[0]
 
 
-        if len(valid_idx) == 0:
+        if len(
+            valid_idx
+        ) == 0:
 
             return pd.DataFrame(
-                columns=["app_id"]
+                columns=[
+                    "app_id"
+                ]
             )
 
 
         n_actual = min(
             top_n,
-            len(valid_idx),
+            len(
+                valid_idx
+            ),
         )
 
 
@@ -822,409 +1109,7 @@ class CachedItemBasedCFRecommender:
             ]
 
             for idx in top_n_idx
-        ]
 
-
-        return pd.DataFrame(
-            {
-                "app_id":
-                    recommended_app_ids
-            }
-        )
-
-
-# =========================================================
-# Optimized User-Based CF
-#
-# 기존 모델 조건 유지:
-#
-# - Query: 사용자가 플레이한 item = 1
-# - cosine similarity
-# - k=30
-# - 자기 자신 제외
-# - similarity weighted interaction
-# - / abs(similarity).sum()
-# - predicted score > 0
-#
-#
-# 최적화:
-#
-# 전체 User norm을 최초 한 번만 계산.
-#
-# 매 사용자:
-#
-# query @ interaction_matrix.T
-#
-# 이후 cached user norm으로 cosine 계산.
-# =========================================================
-
-class OptimizedUserBasedCFRecommender:
-
-    def __init__(
-        self,
-        interaction_matrix,
-        game_to_idx,
-        idx_to_game,
-        k=30,
-    ):
-
-        self.interaction_matrix = (
-            interaction_matrix
-            .tocsr()
-            .astype(
-                np.float64,
-                copy=False,
-            )
-        )
-
-
-        self.game_to_idx = game_to_idx
-        self.idx_to_game = idx_to_game
-
-        self.k = k
-
-        self.n_games = (
-            interaction_matrix.shape[1]
-        )
-
-
-        print(
-            "\nUser vector norm 계산..."
-        )
-
-
-        # 기존 cosine_similarity가
-        # 반복적으로 계산하던 user norm을
-        # 최초 1회 계산
-
-        self.user_norms = np.sqrt(
-
-            np.asarray(
-
-                self.interaction_matrix
-                .multiply(
-                    self.interaction_matrix
-                )
-                .sum(
-                    axis=1
-                )
-
-            ).ravel()
-        )
-
-
-        print(
-            "User norm 계산 완료"
-        )
-
-
-        self.recommend_count = 0
-
-
-    # -----------------------------------------------------
-    # Recommend
-    # -----------------------------------------------------
-
-    def recommend(
-        self,
-        app_id_list,
-        top_n=10,
-        exclude_user_idx=None,
-    ):
-
-        self.recommend_count += 1
-
-
-        col_idx = [
-
-            self.game_to_idx[
-                app_id
-            ]
-
-            for app_id in app_id_list
-
-            if app_id
-            in
-            self.game_to_idx
-        ]
-
-
-        if len(col_idx) == 0:
-
-            return pd.DataFrame(
-                columns=["app_id"]
-            )
-
-
-        # =================================================
-        # 기존 query vector와 동일
-        # =================================================
-
-        query_vec = csr_matrix(
-            (
-                np.ones(
-                    len(col_idx),
-                    dtype=np.float64,
-                ),
-
-                (
-                    np.zeros(
-                        len(col_idx),
-                        dtype=np.int32,
-                    ),
-
-                    np.asarray(
-                        col_idx,
-                        dtype=np.int64,
-                    ),
-                ),
-            ),
-
-            shape=(
-                1,
-                self.n_games,
-            ),
-        )
-
-
-        # 모든 값이 1이지만
-        # 기존 cosine 정의 그대로 계산
-
-        query_norm = float(
-            np.sqrt(
-                query_vec
-                .multiply(
-                    query_vec
-                )
-                .sum()
-            )
-        )
-
-
-        if query_norm == 0:
-
-            return pd.DataFrame(
-                columns=["app_id"]
-            )
-
-
-        # =================================================
-        # Sparse dot product
-        #
-        # query · 모든 user
-        # =================================================
-
-        dots = (
-            query_vec
-            @
-            self.interaction_matrix.T
-        ).tocsr()
-
-
-        sims = (
-            dots
-            .getrow(0)
-            .copy()
-        )
-
-
-        if len(sims.data) == 0:
-
-            return pd.DataFrame(
-                columns=["app_id"]
-            )
-
-
-        # =================================================
-        # cosine similarity
-        #
-        # dot / query_norm / cached_user_norm
-        # =================================================
-
-        denominator = (
-
-            query_norm
-
-            *
-
-            self.user_norms[
-                sims.indices
-            ]
-        )
-
-
-        valid_norm = (
-            denominator > 0
-        )
-
-
-        sims.data[
-            valid_norm
-        ] /= denominator[
-            valid_norm
-        ]
-
-
-        sims.data[
-            ~valid_norm
-        ] = 0.0
-
-
-        sims.eliminate_zeros()
-
-
-        # =================================================
-        # 자기 자신 제외
-        # =================================================
-
-        if (
-            exclude_user_idx
-            is not None
-        ):
-
-            pos = np.where(
-                sims.indices
-                ==
-                exclude_user_idx
-            )[0]
-
-
-            if len(pos) > 0:
-
-                sims.data[
-                    pos
-                ] = 0.0
-
-                sims.eliminate_zeros()
-
-
-        if len(sims.data) == 0:
-
-            return pd.DataFrame(
-                columns=["app_id"]
-            )
-
-
-        # =================================================
-        # 기존 코드 그대로 Top-K User
-        #
-        # similarity > 0 필터 추가하지 않음.
-        # =================================================
-
-        k = min(
-            self.k,
-            len(sims.data),
-        )
-
-
-        top_k_pos = np.argpartition(
-            sims.data,
-            -k,
-        )[-k:]
-
-
-        neighbor_sims = (
-            sims.data[
-                top_k_pos
-            ]
-        )
-
-
-        neighbor_indices = (
-            sims.indices[
-                top_k_pos
-            ]
-        )
-
-
-        # =================================================
-        # 기존 weighted prediction
-        # =================================================
-
-        neighbor_matrix = (
-            self.interaction_matrix[
-                neighbor_indices
-            ]
-        )
-
-
-        weighted_sum = np.asarray(
-
-            neighbor_sims
-            @
-            neighbor_matrix
-
-        ).flatten()
-
-
-        sim_sum = np.abs(
-            neighbor_sims
-        ).sum()
-
-
-        predicted_scores = (
-
-            weighted_sum
-            /
-            sim_sum
-
-            if sim_sum > 0
-
-            else weighted_sum
-        )
-
-
-        # 이미 interaction한 게임 제외
-
-        predicted_scores[
-            col_idx
-        ] = -np.inf
-
-
-        valid_idx = np.where(
-            predicted_scores > 0
-        )[0]
-
-
-        if len(valid_idx) == 0:
-
-            return pd.DataFrame(
-                columns=["app_id"]
-            )
-
-
-        n_actual = min(
-            top_n,
-            len(valid_idx),
-        )
-
-
-        top_n_idx = valid_idx[
-            np.argpartition(
-                predicted_scores[
-                    valid_idx
-                ],
-                -n_actual,
-            )[-n_actual:]
-        ]
-
-
-        top_n_idx = top_n_idx[
-            np.argsort(
-                -predicted_scores[
-                    top_n_idx
-                ]
-            )
-        ]
-
-
-        recommended_app_ids = [
-
-            self.idx_to_game[
-                idx
-            ]
-
-            for idx in top_n_idx
         ]
 
 
@@ -1242,19 +1127,26 @@ class OptimizedUserBasedCFRecommender:
 # 기존:
 #
 # 각 플레이 게임마다
-# cosine(game, all_games)
+# cosine_similarity(game, all_games)
 #
-# -> 평균
+# 계산 후 평균
 #
 #
 # 최적화:
 #
-# 플레이 게임들의 TF-IDF 평균
+# TF-IDF vectors 평균
+# ->
+# 전체 TF-IDF와 sparse dot product 1회
 #
-# -> 전체 게임 matrix와 dot product 1회
 #
+# TfidfVectorizer 기본 norm="l2"이므로:
 #
-# 기존 mean cosine 결과와 동일.
+# mean(cos(x_i, y))
+#
+# =
+#
+# mean(x_i) dot y
+#
 # =========================================================
 
 class FastContentBasedRecommender(
@@ -1274,18 +1166,23 @@ class FastContentBasedRecommender(
 
             if (
                 app_id
-                in
+                not in
                 self.appid_to_idx
             ):
 
-                played_indices.append(
-                    self.appid_to_idx[
-                        app_id
-                    ]
-                )
+                continue
 
 
-        if len(played_indices) == 0:
+            played_indices.append(
+                self.appid_to_idx[
+                    app_id
+                ]
+            )
+
+
+        if len(
+            played_indices
+        ) == 0:
 
             return pd.DataFrame(
                 columns=[
@@ -1296,14 +1193,22 @@ class FastContentBasedRecommender(
             )
 
 
+        # -------------------------------------------------
+        # 사용자가 플레이한 게임들의 TF-IDF
+        # -------------------------------------------------
+
         source_matrix = (
+
             self.tfidf_matrix[
                 played_indices
             ]
+
         )
 
 
-        # 평균 TF-IDF vector
+        # -------------------------------------------------
+        # 평균 TF-IDF profile
+        # -------------------------------------------------
 
         profile = csr_matrix(
             source_matrix.sum(
@@ -1315,26 +1220,38 @@ class FastContentBasedRecommender(
         profile = profile.multiply(
             1.0
             /
-            len(played_indices)
+            len(
+                played_indices
+            )
         )
 
 
-        # mean cosine과 동일한 값
+        # -------------------------------------------------
+        # 기존 mean cosine similarity와 동일
+        # -------------------------------------------------
 
         score_sparse = (
+
             profile
+
             @
+
             self.tfidf_matrix.T
+
         )
 
 
         mean_scores = (
+
             score_sparse
+
             .toarray()
+
             .ravel()
         )
 
 
+        # 기존 코드와 동일하게 전체 정렬
         sim_indices = (
             mean_scores
             .argsort()[::-1]
@@ -1355,17 +1272,31 @@ class FastContentBasedRecommender(
                 continue
 
 
+            app_id = (
+
+                self.meta
+                .iloc[
+                    idx
+                ][
+                    "app_id"
+                ]
+
+            )
+
+
             result.append(
                 {
+
                     "app_id":
-                        self.meta.iloc[
-                            idx
-                        ]["app_id"],
+                        app_id,
 
                     "Name":
-                        self.meta.iloc[
+                        self.meta
+                        .iloc[
                             idx
-                        ]["Name"],
+                        ][
+                            "Name"
+                        ],
 
                     "Similarity":
                         mean_scores[
@@ -1375,7 +1306,10 @@ class FastContentBasedRecommender(
             )
 
 
-            if len(result) == top_n:
+            if len(
+                result
+            ) == top_n:
+
                 break
 
 
@@ -1385,119 +1319,114 @@ class FastContentBasedRecommender(
 
 
 # =========================================================
-# Multi-Retriever + BPR Ranker
-#
-# Item30
-# User30
-# Content30
-#
-# -> UNION
-# -> BPR Score
-# -> Top10
+# Multi Retriever
 # =========================================================
 
 class MultiRetrieverBPRReranker:
 
+    """
+    Case 2
+
+    Item-Based Top-30 -------┐
+                             │
+    BPR Top-30 --------------┼── UNION
+                             │
+    Content Top-30 ----------┘
+                              ↓
+                        BPR Rerank
+                              ↓
+                           Top-10
+    """
+
+
     def __init__(
         self,
         item_model,
-        user_model,
+        bpr_retriever,
         content_model,
         bpr_model,
-        bpr_user_ids,
-        bpr_item_ids,
-        user_to_idx,
+        user_ids,
+        item_ids,
     ):
 
-        self.item_model = item_model
-        self.user_model = user_model
-        self.content_model = content_model
+        self.item_model = (
+            item_model
+        )
 
-        self.bpr_model = bpr_model
+        self.bpr_retriever = (
+            bpr_retriever
+        )
 
+        self.content_model = (
+            content_model
+        )
 
-        self.bpr_user_ids = np.asarray(
-            bpr_user_ids
+        self.bpr_model = (
+            bpr_model
         )
 
 
-        self.bpr_item_ids = np.asarray(
-            bpr_item_ids
+        self.user_ids = np.asarray(
+            user_ids
+        )
+
+        self.item_ids = np.asarray(
+            item_ids
         )
 
 
-        # User-Based 자기 자신 제외
-        self.user_to_idx = (
-            user_to_idx
-        )
-
-
-        # BPR item은 약 3.7만이므로
-        # dictionary lookup 사용
-
-        self.bpr_item_to_idx = {
-
-            app_id:
-                idx
-
-            for idx, app_id
-            in enumerate(
-                self.bpr_item_ids
-            )
-        }
-
-
+        # 평가 과정에서 생성된 후보 저장
         self.candidate_log = {}
 
         self.pool_logs = []
 
 
-        self.missing_bpr_users = 0
+        self.missing_users = 0
 
-        self.missing_bpr_candidates = 0
-
-
-        self.call_count = 0
+        self.missing_candidate_items = 0
 
 
-    # -----------------------------------------------------
-    # BPR User Lookup
-    # -----------------------------------------------------
+    # =====================================================
+    # ID -> Index
+    # =====================================================
 
-    def find_bpr_user_index(
-        self,
-        user_id,
+    @staticmethod
+    def find_index(
+        sorted_ids,
+        value,
     ):
 
         idx = int(
             np.searchsorted(
-                self.bpr_user_ids,
-                user_id,
+                sorted_ids,
+                value,
             )
         )
 
 
         if idx >= len(
-            self.bpr_user_ids
+            sorted_ids
         ):
+
             return None
 
 
         if (
-            self.bpr_user_ids[
+            sorted_ids[
                 idx
             ]
-            != user_id
+            != value
         ):
+
             return None
 
 
         return idx
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # Recommend
-    # -----------------------------------------------------
+    # =====================================================
 
     def recommend(
         self,
@@ -1505,17 +1434,6 @@ class MultiRetrieverBPRReranker:
         app_id_list=None,
         top_n=10,
     ):
-
-        self.call_count += 1
-
-
-        if self.call_count % 20 == 0:
-
-            print(
-                f"[Case2] "
-                f"{self.call_count} users 완료"
-            )
-
 
         if app_id_list is None:
             app_id_list = []
@@ -1527,7 +1445,7 @@ class MultiRetrieverBPRReranker:
 
 
         # =================================================
-        # 1. Item Top-30
+        # 1. Item-Based Top-30
         # =================================================
 
         item_result = (
@@ -1541,83 +1459,82 @@ class MultiRetrieverBPRReranker:
         )
 
 
-        item_ids = (
+        if (
+            item_result is None
+            or
+            len(
+                item_result
+            ) == 0
+        ):
 
-            item_result["app_id"]
-            .tolist()
+            item_ids = []
 
-            if (
-                item_result is not None
-                and
-                len(item_result) > 0
+        else:
+
+            item_ids = (
+
+                item_result[
+                    "app_id"
+                ]
+
+                .tolist()
             )
-
-            else []
-        )
 
 
         item_ids = unique_preserve_order(
             [
                 app_id
-
-                for app_id
-                in item_ids
-
-                if app_id
-                not in played_set
+                for app_id in item_ids
+                if app_id not in played_set
             ]
         )
 
 
         # =================================================
-        # 2. User Top-30
+        # 2. BPR Top-30
         # =================================================
 
-        current_user_idx = (
-            self.user_to_idx.get(
-                user_id
-            )
-        )
+        bpr_result = (
+            self.bpr_retriever.recommend(
+                user_id=
+                    user_id,
 
-
-        user_result = (
-            self.user_model.recommend(
                 app_id_list=
                     app_id_list,
 
                 top_n=
-                    USER_CANDIDATE_N,
-
-                exclude_user_idx=
-                    current_user_idx,
+                    BPR_CANDIDATE_N,
             )
         )
 
 
-        user_ids = (
+        if (
+            bpr_result is None
+            or
+            len(
+                bpr_result
+            ) == 0
+        ):
 
-            user_result["app_id"]
-            .tolist()
+            bpr_ids = []
 
-            if (
-                user_result is not None
-                and
-                len(user_result) > 0
+        else:
+
+            bpr_ids = (
+
+                bpr_result[
+                    "app_id"
+                ]
+
+                .tolist()
             )
 
-            else []
-        )
 
-
-        user_ids = unique_preserve_order(
+        bpr_ids = unique_preserve_order(
             [
                 app_id
-
-                for app_id
-                in user_ids
-
-                if app_id
-                not in played_set
+                for app_id in bpr_ids
+                if app_id not in played_set
             ]
         )
 
@@ -1637,30 +1554,33 @@ class MultiRetrieverBPRReranker:
         )
 
 
-        content_ids = (
+        if (
+            content_result is None
+            or
+            len(
+                content_result
+            ) == 0
+        ):
 
-            content_result["app_id"]
-            .tolist()
+            content_ids = []
 
-            if (
-                content_result is not None
-                and
-                len(content_result) > 0
+        else:
+
+            content_ids = (
+
+                content_result[
+                    "app_id"
+                ]
+
+                .tolist()
             )
-
-            else []
-        )
 
 
         content_ids = unique_preserve_order(
             [
                 app_id
-
-                for app_id
-                in content_ids
-
-                if app_id
-                not in played_set
+                for app_id in content_ids
+                if app_id not in played_set
             ]
         )
 
@@ -1673,15 +1593,16 @@ class MultiRetrieverBPRReranker:
 
             item_ids
             +
-            user_ids
+            bpr_ids
             +
             content_ids
+
         )
 
 
-        # -------------------------------------------------
-        # Original Retriever Rank
-        # -------------------------------------------------
+        # =================================================
+        # Retriever별 rank
+        # =================================================
 
         item_rank = {
 
@@ -1695,14 +1616,14 @@ class MultiRetrieverBPRReranker:
         }
 
 
-        user_rank = {
+        bpr_rank = {
 
             app_id:
                 rank + 1
 
             for rank, app_id
             in enumerate(
-                user_ids
+                bpr_ids
             )
         }
 
@@ -1719,13 +1640,46 @@ class MultiRetrieverBPRReranker:
         }
 
 
+        # =================================================
+        # Retriever Score
+        # =================================================
+
+        bpr_retrieval_score = {}
+
+
+        if (
+            bpr_result is not None
+            and
+            len(
+                bpr_result
+            ) > 0
+            and
+            "score"
+            in bpr_result.columns
+        ):
+
+            bpr_retrieval_score = dict(
+                zip(
+                    bpr_result[
+                        "app_id"
+                    ],
+
+                    bpr_result[
+                        "score"
+                    ],
+                )
+            )
+
+
         content_similarity = {}
 
 
         if (
             content_result is not None
             and
-            len(content_result) > 0
+            len(
+                content_result
+            ) > 0
             and
             "Similarity"
             in content_result.columns
@@ -1748,7 +1702,9 @@ class MultiRetrieverBPRReranker:
         # UNION Empty
         # =================================================
 
-        if len(union_ids) == 0:
+        if len(
+            union_ids
+        ) == 0:
 
             self.candidate_log[
                 user_id
@@ -1757,8 +1713,8 @@ class MultiRetrieverBPRReranker:
                 "item":
                     item_ids,
 
-                "user":
-                    user_ids,
+                "bpr":
+                    bpr_ids,
 
                 "content":
                     content_ids,
@@ -1783,166 +1739,219 @@ class MultiRetrieverBPRReranker:
 
 
         # =================================================
-        # 5. BPR User Index
+        # 5. user_id -> BPR user index
         # =================================================
 
-        bpr_user_idx = (
-            self.find_bpr_user_index(
+        user_idx = self.find_index(
+            self.user_ids,
+            user_id,
+        )
+
+
+        if user_idx is None:
+
+            self.missing_users += 1
+
+
+            self.candidate_log[
                 user_id
+            ] = {
+
+                "item":
+                    item_ids,
+
+                "bpr":
+                    bpr_ids,
+
+                "content":
+                    content_ids,
+
+                "union":
+                    union_ids,
+
+                "scoreable_union":
+                    [],
+
+                "final":
+                    [],
+            }
+
+
+            return pd.DataFrame(
+                columns=[
+                    "app_id",
+                    "bpr_score",
+                ]
+            )
+
+
+        # =================================================
+        # 6. Candidate -> BPR item index
+        # =================================================
+
+        union_array = np.asarray(
+            union_ids
+        )
+
+
+        item_indices = np.searchsorted(
+            self.item_ids,
+            union_array,
+        )
+
+
+        valid = (
+
+            item_indices
+            <
+            len(
+                self.item_ids
             )
         )
 
 
-        if bpr_user_idx is None:
-
-            self.missing_bpr_users += 1
-
-
-            self.candidate_log[
-                user_id
-            ] = {
-
-                "item":
-                    item_ids,
-
-                "user":
-                    user_ids,
-
-                "content":
-                    content_ids,
-
-                "union":
-                    union_ids,
-
-                "scoreable_union":
-                    [],
-
-                "final":
-                    [],
-            }
+        matched = np.zeros(
+            len(
+                union_array
+            ),
+            dtype=bool,
+        )
 
 
-            return pd.DataFrame(
-                columns=[
-                    "app_id",
-                    "bpr_score",
+        valid_positions = np.where(
+            valid
+        )[0]
+
+
+        if len(
+            valid_positions
+        ) > 0:
+
+            matched[
+                valid_positions
+            ] = (
+
+                self.item_ids[
+                    item_indices[
+                        valid_positions
+                    ]
                 ]
+
+                ==
+
+                union_array[
+                    valid_positions
+                ]
+
             )
+
+
+        valid = (
+            valid
+            &
+            matched
+        )
+
+
+        self.missing_candidate_items += int(
+            (
+                ~valid
+            ).sum()
+        )
+
+
+        scoreable_app_ids = (
+            union_array[
+                valid
+            ]
+        )
+
+
+        scoreable_item_indices = (
+            item_indices[
+                valid
+            ]
+        )
 
 
         # =================================================
-        # 6. Candidate -> BPR Index
+        # 후보가 전부 BPR mapping 밖
         # =================================================
 
-        scoreable_app_ids = []
-
-        scoreable_item_indices = []
-
-
-        for app_id in union_ids:
-
-            item_idx = (
-                self.bpr_item_to_idx.get(
-                    app_id
-                )
-            )
-
-
-            if item_idx is None:
-
-                self.missing_bpr_candidates += 1
-
-                continue
-
-
-            scoreable_app_ids.append(
-                app_id
-            )
-
-            scoreable_item_indices.append(
-                item_idx
-            )
-
-
-        if len(scoreable_app_ids) == 0:
-
-            self.candidate_log[
-                user_id
-            ] = {
-
-                "item":
-                    item_ids,
-
-                "user":
-                    user_ids,
-
-                "content":
-                    content_ids,
-
-                "union":
-                    union_ids,
-
-                "scoreable_union":
-                    [],
-
-                "final":
-                    [],
-            }
-
-
-            return pd.DataFrame(
-                columns=[
-                    "app_id",
-                    "bpr_score",
-                ]
-            )
-
-
-        scoreable_app_ids = np.asarray(
+        if len(
             scoreable_app_ids
-        )
+        ) == 0:
+
+            self.candidate_log[
+                user_id
+            ] = {
+
+                "item":
+                    item_ids,
+
+                "bpr":
+                    bpr_ids,
+
+                "content":
+                    content_ids,
+
+                "union":
+                    union_ids,
+
+                "scoreable_union":
+                    [],
+
+                "final":
+                    [],
+            }
 
 
-        scoreable_item_indices = np.asarray(
-            scoreable_item_indices,
-            dtype=np.int64,
-        )
+            return pd.DataFrame(
+                columns=[
+                    "app_id",
+                    "bpr_score",
+                ]
+            )
 
 
         # =================================================
-        # 7. BPR Ranking
+        # 7. BPR Reranking
         #
-        # BPR은 후보 생성에 사용하지 않음.
-        #
-        # 세 Retriever가 생성한 UNION 후보에만
-        # BPR score 계산.
+        # UNION에 들어온 후보만 점수 계산
         # =================================================
 
         user_factor = (
+
             self.bpr_model
             .user_factors[
-                bpr_user_idx
+                user_idx
             ]
+
         )
 
 
         candidate_factors = (
+
             self.bpr_model
             .item_factors[
                 scoreable_item_indices
             ]
+
         )
 
 
         bpr_scores = (
+
             candidate_factors
+
             @
+
             user_factor
         )
 
 
         # =================================================
-        # 8. Sort
+        # 8. BPR Score 정렬
         # =================================================
 
         order = np.argsort(
@@ -1952,45 +1961,55 @@ class MultiRetrieverBPRReranker:
 
 
         ranked_app_ids = (
+
             scoreable_app_ids[
                 order
             ]
+
         )
 
 
         ranked_scores = (
+
             bpr_scores[
                 order
             ]
+
         )
 
 
         # =================================================
-        # 9. Top-10
+        # 9. Final Top-10
         # =================================================
 
         n_actual = min(
             top_n,
-            len(ranked_app_ids),
+            len(
+                ranked_app_ids
+            ),
         )
 
 
         final_app_ids = (
+
             ranked_app_ids[
                 :n_actual
             ]
+
         )
 
 
         final_scores = (
+
             ranked_scores[
                 :n_actual
             ]
+
         )
 
 
         # =================================================
-        # Candidate Log
+        # 10. Candidate Cache
         # =================================================
 
         self.candidate_log[
@@ -2000,8 +2019,8 @@ class MultiRetrieverBPRReranker:
             "item":
                 item_ids,
 
-            "user":
-                user_ids,
+            "bpr":
+                bpr_ids,
 
             "content":
                 content_ids,
@@ -2018,10 +2037,10 @@ class MultiRetrieverBPRReranker:
 
 
         # =================================================
-        # Candidate Pool 저장
+        # 11. Candidate Pool 상세 저장
         # =================================================
 
-        bpr_score_map = dict(
+        rerank_score_map = dict(
             zip(
                 scoreable_app_ids.tolist(),
                 bpr_scores.tolist(),
@@ -2041,7 +2060,7 @@ class MultiRetrieverBPRReranker:
         }
 
 
-        rows = []
+        pool_rows = []
 
 
         for app_id in union_ids:
@@ -2052,13 +2071,11 @@ class MultiRetrieverBPRReranker:
                 item_rank
             )
 
-
-            from_user = (
+            from_bpr = (
                 app_id
                 in
-                user_rank
+                bpr_rank
             )
-
 
             from_content = (
                 app_id
@@ -2067,8 +2084,9 @@ class MultiRetrieverBPRReranker:
             )
 
 
-            rows.append(
+            pool_rows.append(
                 {
+
                     "user_id":
                         user_id,
 
@@ -2080,9 +2098,9 @@ class MultiRetrieverBPRReranker:
                             from_item
                         ),
 
-                    "from_user":
+                    "from_bpr":
                         int(
-                            from_user
+                            from_bpr
                         ),
 
                     "from_content":
@@ -2097,7 +2115,7 @@ class MultiRetrieverBPRReranker:
                             )
                             +
                             int(
-                                from_user
+                                from_bpr
                             )
                             +
                             int(
@@ -2111,14 +2129,20 @@ class MultiRetrieverBPRReranker:
                             np.nan,
                         ),
 
-                    "user_rank":
-                        user_rank.get(
+                    "bpr_rank":
+                        bpr_rank.get(
                             app_id,
                             np.nan,
                         ),
 
                     "content_rank":
                         content_rank.get(
+                            app_id,
+                            np.nan,
+                        ),
+
+                    "bpr_retrieval_score":
+                        bpr_retrieval_score.get(
                             app_id,
                             np.nan,
                         ),
@@ -2130,7 +2154,7 @@ class MultiRetrieverBPRReranker:
                         ),
 
                     "bpr_rerank_score":
-                        bpr_score_map.get(
+                        rerank_score_map.get(
                             app_id,
                             np.nan,
                         ),
@@ -2153,13 +2177,18 @@ class MultiRetrieverBPRReranker:
 
         self.pool_logs.append(
             pd.DataFrame(
-                rows
+                pool_rows
             )
         )
 
 
+        # =================================================
+        # 12. 평가용 최종 추천
+        # =================================================
+
         return pd.DataFrame(
             {
+
                 "app_id":
                     final_app_ids,
 
@@ -2186,6 +2215,7 @@ def build_candidate_diagnostics(
     )
 
 
+    # Positive Test Item만 정답
     positive_test = (
 
         test_df[
@@ -2212,7 +2242,9 @@ def build_candidate_diagnostics(
             "app_id"
         ]
 
-        .apply(list)
+        .apply(
+            list
+        )
 
         .to_dict()
     )
@@ -2225,7 +2257,9 @@ def build_candidate_diagnostics(
         index=False
     ):
 
-        user_id = row.user_id
+        user_id = (
+            row.user_id
+        )
 
 
         relevant = set(
@@ -2236,7 +2270,9 @@ def build_candidate_diagnostics(
         )
 
 
-        if len(relevant) == 0:
+        if len(
+            relevant
+        ) == 0:
             continue
 
 
@@ -2258,9 +2294,9 @@ def build_candidate_diagnostics(
         )
 
 
-        user_set = set(
+        bpr_set = set(
             log.get(
-                "user",
+                "bpr",
                 [],
             )
         )
@@ -2297,8 +2333,8 @@ def build_candidate_diagnostics(
         )
 
 
-        user_hits = (
-            user_set
+        bpr_hits = (
+            bpr_set
             &
             relevant
         )
@@ -2332,6 +2368,7 @@ def build_candidate_diagnostics(
 
         rows.append(
             {
+
                 "user_id":
                     user_id,
 
@@ -2345,108 +2382,141 @@ def build_candidate_diagnostics(
                     n_test,
 
 
-                # -----------------------------------------
-                # Candidate Counts
-                # -----------------------------------------
+                # =========================================
+                # Candidate Count
+                # =========================================
 
                 "item_candidate_count":
-                    len(item_set),
+                    len(
+                        item_set
+                    ),
 
-                "user_candidate_count":
-                    len(user_set),
+                "bpr_candidate_count":
+                    len(
+                        bpr_set
+                    ),
 
                 "content_candidate_count":
-                    len(content_set),
+                    len(
+                        content_set
+                    ),
 
                 "union_candidate_count":
-                    len(union_set),
+                    len(
+                        union_set
+                    ),
 
                 "scoreable_union_count":
-                    len(scoreable_set),
+                    len(
+                        scoreable_set
+                    ),
 
 
-                # -----------------------------------------
-                # Hit Counts
-                # -----------------------------------------
+                # =========================================
+                # Hits
+                # =========================================
 
                 "item_candidate_hits":
-                    len(item_hits),
+                    len(
+                        item_hits
+                    ),
 
-                "user_candidate_hits":
-                    len(user_hits),
+                "bpr_candidate_hits":
+                    len(
+                        bpr_hits
+                    ),
 
                 "content_candidate_hits":
-                    len(content_hits),
+                    len(
+                        content_hits
+                    ),
 
                 "union_candidate_hits":
-                    len(union_hits),
+                    len(
+                        union_hits
+                    ),
 
-                "scoreable_union_hits":
-                    len(scoreable_hits),
 
-
-                # -----------------------------------------
+                # =========================================
                 # Recall
-                # -----------------------------------------
+                # =========================================
 
                 "item_candidate_recall":
-                    len(item_hits)
+                    len(
+                        item_hits
+                    )
                     /
                     n_test,
 
-                "user_candidate_recall":
-                    len(user_hits)
+                "bpr_candidate_recall":
+                    len(
+                        bpr_hits
+                    )
                     /
                     n_test,
 
                 "content_candidate_recall":
-                    len(content_hits)
+                    len(
+                        content_hits
+                    )
                     /
                     n_test,
 
                 "union_candidate_recall":
-                    len(union_hits)
+                    len(
+                        union_hits
+                    )
                     /
                     n_test,
 
                 "scoreable_union_recall":
-                    len(scoreable_hits)
+                    len(
+                        scoreable_hits
+                    )
                     /
                     n_test,
 
 
-                # -----------------------------------------
-                # Candidate Hit Rate
-                # -----------------------------------------
+                # =========================================
+                # Candidate Hit 여부
+                # =========================================
 
                 "item_candidate_hit":
                     int(
-                        len(item_hits) > 0
+                        len(
+                            item_hits
+                        ) > 0
                     ),
 
-                "user_candidate_hit":
+                "bpr_candidate_hit":
                     int(
-                        len(user_hits) > 0
+                        len(
+                            bpr_hits
+                        ) > 0
                     ),
 
                 "content_candidate_hit":
                     int(
-                        len(content_hits) > 0
+                        len(
+                            content_hits
+                        ) > 0
                     ),
 
                 "union_candidate_hit":
                     int(
-                        len(union_hits) > 0
+                        len(
+                            union_hits
+                        ) > 0
                     ),
 
 
-                # -----------------------------------------
+                # =========================================
                 # Item 대비 추가 정답
-                # -----------------------------------------
+                # =========================================
 
-                "user_added_hits":
+                "bpr_added_hits":
                     len(
-                        user_hits
+                        bpr_hits
                         -
                         item_set
                     ),
@@ -2466,22 +2536,22 @@ def build_candidate_diagnostics(
                     ),
 
 
-                # -----------------------------------------
-                # Unique Hit
-                # -----------------------------------------
+                # =========================================
+                # Unique Hits
+                # =========================================
 
                 "item_unique_hits":
                     len(
                         item_hits
                         -
-                        user_set
+                        bpr_set
                         -
                         content_set
                     ),
 
-                "user_unique_hits":
+                "bpr_unique_hits":
                     len(
-                        user_hits
+                        bpr_hits
                         -
                         item_set
                         -
@@ -2494,19 +2564,19 @@ def build_candidate_diagnostics(
                         -
                         item_set
                         -
-                        user_set
+                        bpr_set
                     ),
 
 
-                # -----------------------------------------
-                # Overlap
-                # -----------------------------------------
+                # =========================================
+                # Retriever Overlap
+                # =========================================
 
-                "item_user_overlap":
+                "item_bpr_overlap":
                     len(
                         item_set
                         &
-                        user_set
+                        bpr_set
                     ),
 
                 "item_content_overlap":
@@ -2516,9 +2586,9 @@ def build_candidate_diagnostics(
                         content_set
                     ),
 
-                "user_content_overlap":
+                "bpr_content_overlap":
                     len(
-                        user_set
+                        bpr_set
                         &
                         content_set
                     ),
@@ -2527,7 +2597,7 @@ def build_candidate_diagnostics(
                     len(
                         item_set
                         &
-                        user_set
+                        bpr_set
                         &
                         content_set
                     ),
@@ -2619,14 +2689,15 @@ def make_summary(
 
 
     return {
+
         "experiment":
-            "item_user_content_union_bpr_rank",
+            "case2_multi_retriever_bpr_reranking",
 
         "item_candidate_n":
             ITEM_CANDIDATE_N,
 
-        "user_candidate_n":
-            USER_CANDIDATE_N,
+        "bpr_candidate_n":
+            BPR_CANDIDATE_N,
 
         "content_candidate_n":
             CONTENT_CANDIDATE_N,
@@ -2635,10 +2706,12 @@ def make_summary(
             TOP_N,
 
         "n_users":
-            len(eval_df),
+            len(
+                eval_df
+            ),
 
 
-        # Final
+        # Final Top-10
         "precision_at_10":
             eval_df[
                 "precision"
@@ -2659,6 +2732,7 @@ def make_summary(
                 "ndcg"
             ].mean(),
 
+
         "micro_precision_at_10":
             micro_precision,
 
@@ -2678,9 +2752,9 @@ def make_summary(
                 "item_candidate_recall"
             ].mean(),
 
-        "user_candidate_recall":
+        "bpr_candidate_recall":
             candidate_df[
-                "user_candidate_recall"
+                "bpr_candidate_recall"
             ].mean(),
 
         "content_candidate_recall":
@@ -2703,6 +2777,11 @@ def make_summary(
                 "union_candidate_count"
             ].mean(),
 
+        "avg_scoreable_union_candidates":
+            candidate_df[
+                "scoreable_union_count"
+            ].mean(),
+
         "recovered_hits_vs_item":
             int(
                 candidate_df[
@@ -2710,10 +2789,10 @@ def make_summary(
                 ].sum()
             ),
 
-        "user_unique_hits":
+        "bpr_unique_hits":
             int(
                 candidate_df[
-                    "user_unique_hits"
+                    "bpr_unique_hits"
                 ].sum()
             ),
 
@@ -2727,7 +2806,7 @@ def make_summary(
 
 
 # =========================================================
-# Case1 vs Case2
+# Case 1 Compare
 # =========================================================
 
 def compare_with_case1(
@@ -2737,7 +2816,7 @@ def compare_with_case1(
     if not CASE1_EVAL_PATH.exists():
 
         print(
-            "\nCase 1 CSV 없음 → 비교 생략"
+            "\nCase 1 결과 없음 → 비교 생략"
         )
 
         return None
@@ -2749,6 +2828,7 @@ def compare_with_case1(
 
 
     columns = [
+
         "user_id",
         "precision",
         "recall",
@@ -2766,6 +2846,7 @@ def compare_with_case1(
 
         .rename(
             columns={
+
                 "precision":
                     "case1_precision",
 
@@ -2793,6 +2874,7 @@ def compare_with_case1(
 
         .rename(
             columns={
+
                 "precision":
                     "case2_precision",
 
@@ -2868,6 +2950,22 @@ def compare_with_case1(
 
 
     result[
+        "delta_hit"
+    ] = (
+
+        result[
+            "case2_hit"
+        ]
+
+        -
+
+        result[
+            "case1_hit"
+        ]
+    )
+
+
+    result[
         "delta_ndcg"
     ] = (
 
@@ -2892,11 +2990,6 @@ def compare_with_case1(
 
 def main():
 
-    start_time = (
-        time.perf_counter()
-    )
-
-
     print()
 
     print(
@@ -2904,15 +2997,19 @@ def main():
     )
 
     print(
-        " Hybrid Case 2"
+        " Hybrid Experiment B"
     )
 
     print(
-        " Item30 + User30 + Content30"
+        " Optimized Multi-Retriever"
     )
 
     print(
-        " UNION -> BPR Ranking -> Top10"
+        " Item30 + BPR30 + Content30"
+    )
+
+    print(
+        " UNION -> BPR -> Top10"
     )
 
     print(
@@ -2925,7 +3022,7 @@ def main():
     # =====================================================
 
     print(
-        "\n===== 1. MF Train / Test ====="
+        "\n===== 1. MF Train / Test 로드 ====="
     )
 
 
@@ -2940,7 +3037,7 @@ def main():
     )
 
     print(
-        "Test:",
+        "Test :",
         test_df.shape,
     )
 
@@ -2950,7 +3047,7 @@ def main():
     # =====================================================
 
     print(
-        "\n===== 2. Interaction Matrix ====="
+        "\n===== 2. Interaction Matrix 생성 ====="
     )
 
 
@@ -2971,11 +3068,11 @@ def main():
 
 
     # =====================================================
-    # 3. Item-Based
+    # 3. Optimized Item-Based
     # =====================================================
 
     print(
-        "\n===== 3. Optimized Item-Based ====="
+        "\n===== 3. Cached Item-Based 생성 ====="
     )
 
 
@@ -2996,72 +3093,59 @@ def main():
     )
 
 
-    # =====================================================
-    # 4. User-Based
-    # =====================================================
+    # ItemBased 내부에 필요한
+    # Item x User matrix는 이미 존재
+    del interaction_matrix
 
-    print(
-        "\n===== 4. Optimized User-Based ====="
-    )
-
-
-    user_model = (
-        OptimizedUserBasedCFRecommender(
-            interaction_matrix=
-                interaction_matrix,
-
-            game_to_idx=
-                game_to_idx,
-
-            idx_to_game=
-                idx_to_game,
-
-            k=
-                USER_K,
-        )
-    )
+    gc.collect()
 
 
     # =====================================================
-    # 5. BPR Ranker
+    # 4. BPR
     # =====================================================
 
     print(
-        "\n===== 5. BPR Ranker ====="
+        "\n===== 4. BPR 로드 ====="
     )
 
 
     (
-        bpr_model_path,
-        bpr_mapping_path,
+        model_path,
+        mapping_path,
+        user_items_path,
     ) = find_bpr_files()
 
 
     bpr_model = (
         BayesianPersonalizedRanking.load(
             str(
-                bpr_model_path
+                model_path
             )
         )
     )
 
 
     mapping = np.load(
-        bpr_mapping_path
+        mapping_path
     )
 
 
-    bpr_user_ids = (
+    user_ids = (
         mapping[
             "user_ids"
         ]
     )
 
 
-    bpr_item_ids = (
+    item_ids = (
         mapping[
             "item_ids"
         ]
+    )
+
+
+    bpr_user_items = load_npz(
+        user_items_path
     )
 
 
@@ -3081,6 +3165,16 @@ def main():
     )
 
 
+    print(
+        "User Items:",
+        bpr_user_items.shape,
+    )
+
+
+    # =====================================================
+    # BPR Shape 검증
+    # =====================================================
+
     if (
         bpr_model
         .user_factors
@@ -3089,12 +3183,12 @@ def main():
         !=
 
         len(
-            bpr_user_ids
+            user_ids
         )
     ):
 
         raise ValueError(
-            "BPR user factor와 mapping user 수 불일치"
+            "BPR user_factors와 user_ids 수가 다릅니다."
         )
 
 
@@ -3106,13 +3200,54 @@ def main():
         !=
 
         len(
-            bpr_item_ids
+            item_ids
         )
     ):
 
         raise ValueError(
-            "BPR item factor와 mapping item 수 불일치"
+            "BPR item_factors와 item_ids 수가 다릅니다."
         )
+
+
+    if (
+        bpr_user_items.shape[0]
+
+        !=
+
+        len(
+            user_ids
+        )
+    ):
+
+        raise ValueError(
+            "BPR user_items와 user_ids 수가 다릅니다."
+        )
+
+
+    # =====================================================
+    # 5. BPR Retriever
+    # =====================================================
+
+    print(
+        "\n===== 5. BPR Retriever 생성 ====="
+    )
+
+
+    bpr_retriever = (
+        ImplicitBPRAdapter(
+            model=
+                bpr_model,
+
+            user_items=
+                bpr_user_items,
+
+            user_ids=
+                user_ids,
+
+            item_ids=
+                item_ids,
+        )
+    )
 
 
     # =====================================================
@@ -3120,7 +3255,7 @@ def main():
     # =====================================================
 
     print(
-        "\n===== 6. Optimized Content-Based ====="
+        "\n===== 6. Optimized Content-Based 준비 ====="
     )
 
 
@@ -3135,7 +3270,7 @@ def main():
 
 
     print(
-        "TF-IDF fit 시작..."
+        "\nTF-IDF fit 시작..."
     )
 
 
@@ -3158,11 +3293,11 @@ def main():
 
 
     # =====================================================
-    # 7. 동일 평가 사용자 400명
+    # 7. 평가 사용자
     # =====================================================
 
     print(
-        "\n===== 7. 평가 사용자 ====="
+        "\n===== 7. 기존 평가 사용자 준비 ====="
     )
 
 
@@ -3181,7 +3316,14 @@ def main():
 
     print(
         "평가 사용자:",
-        len(sampled_users),
+        len(
+            sampled_users
+        )
+    )
+
+
+    print(
+        "\nReview Group:"
     )
 
 
@@ -3194,7 +3336,7 @@ def main():
 
 
     # =====================================================
-    # 8. Multi Retriever
+    # 8. Multi-Retriever
     # =====================================================
 
     print(
@@ -3207,8 +3349,8 @@ def main():
             item_model=
                 item_model,
 
-            user_model=
-                user_model,
+            bpr_retriever=
+                bpr_retriever,
 
             content_model=
                 content_model,
@@ -3216,14 +3358,11 @@ def main():
             bpr_model=
                 bpr_model,
 
-            bpr_user_ids=
-                bpr_user_ids,
+            user_ids=
+                user_ids,
 
-            bpr_item_ids=
-                bpr_item_ids,
-
-            user_to_idx=
-                user_to_idx,
+            item_ids=
+                item_ids,
         )
     )
 
@@ -3261,11 +3400,11 @@ def main():
 
 
     # =====================================================
-    # 10. Final Top10
+    # 10. Final Top-10 Report
     # =====================================================
 
     print(
-        "\n===== 10. Final Top-10 ====="
+        "\n===== 10. 최종 Top-10 평가 ====="
     )
 
 
@@ -3279,11 +3418,11 @@ def main():
 
 
     # =====================================================
-    # 11. Candidate Analysis
+    # 11. Candidate Diagnostic
     # =====================================================
 
     print(
-        "\n===== 11. Candidate 분석 ====="
+        "\n===== 11. Candidate Pool 분석 ====="
     )
 
 
@@ -3301,8 +3440,12 @@ def main():
     )
 
 
+    # =====================================================
+    # Candidate Count
+    # =====================================================
+
     print(
-        "\n===== 평균 Candidate 수 ====="
+        "\n===== 평균 후보 개수 ====="
     )
 
 
@@ -3313,8 +3456,8 @@ def main():
 
 
     print(
-        "User:",
-        f"{candidate_df['user_candidate_count'].mean():.2f}"
+        "BPR:",
+        f"{candidate_df['bpr_candidate_count'].mean():.2f}"
     )
 
 
@@ -3331,24 +3474,34 @@ def main():
 
 
     print(
+        "BPR Score 가능 UNION:",
+        f"{candidate_df['scoreable_union_count'].mean():.2f}"
+    )
+
+
+    # =====================================================
+    # Candidate Recall
+    # =====================================================
+
+    print(
         "\n===== Candidate Recall ====="
     )
 
 
     print(
-        "Item:",
+        "Item Top-30:",
         f"{candidate_df['item_candidate_recall'].mean():.6f}"
     )
 
 
     print(
-        "User:",
-        f"{candidate_df['user_candidate_recall'].mean():.6f}"
+        "BPR Top-30:",
+        f"{candidate_df['bpr_candidate_recall'].mean():.6f}"
     )
 
 
     print(
-        "Content:",
+        "Content Top-30:",
         f"{candidate_df['content_candidate_recall'].mean():.6f}"
     )
 
@@ -3360,21 +3513,58 @@ def main():
 
 
     print(
-        "BPR Scoreable UNION:",
+        "Scoreable UNION:",
         f"{candidate_df['scoreable_union_recall'].mean():.6f}"
     )
 
 
+    # =====================================================
+    # Candidate HitRate
+    # =====================================================
+
     print(
-        "\n===== Item 대비 정답 복구 ====="
+        "\n===== Candidate Hit Rate ====="
     )
 
 
     print(
-        "User 추가 Hit:",
+        "Item:",
+        f"{candidate_df['item_candidate_hit'].mean():.6f}"
+    )
+
+
+    print(
+        "BPR:",
+        f"{candidate_df['bpr_candidate_hit'].mean():.6f}"
+    )
+
+
+    print(
+        "Content:",
+        f"{candidate_df['content_candidate_hit'].mean():.6f}"
+    )
+
+
+    print(
+        "UNION:",
+        f"{candidate_df['union_candidate_hit'].mean():.6f}"
+    )
+
+
+    # =====================================================
+    # Item 대비 새로운 Hit
+    # =====================================================
+
+    print(
+        "\n===== Item-Based가 놓친 정답 복구 ====="
+    )
+
+
+    print(
+        "BPR 추가 Hit:",
         int(
             candidate_df[
-                "user_added_hits"
+                "bpr_added_hits"
             ].sum()
         )
     )
@@ -3400,8 +3590,12 @@ def main():
     )
 
 
+    # =====================================================
+    # Unique Hit
+    # =====================================================
+
     print(
-        "\n===== Unique Hits ====="
+        "\n===== Retriever Unique Hit ====="
     )
 
 
@@ -3416,10 +3610,10 @@ def main():
 
 
     print(
-        "User Only:",
+        "BPR Only:",
         int(
             candidate_df[
-                "user_unique_hits"
+                "bpr_unique_hits"
             ].sum()
         )
     )
@@ -3435,14 +3629,18 @@ def main():
     )
 
 
+    # =====================================================
+    # Overlap
+    # =====================================================
+
     print(
-        "\n===== Retriever Overlap ====="
+        "\n===== Retriever 평균 Overlap ====="
     )
 
 
     print(
-        "Item ∩ User:",
-        f"{candidate_df['item_user_overlap'].mean():.2f}"
+        "Item ∩ BPR:",
+        f"{candidate_df['item_bpr_overlap'].mean():.2f}"
     )
 
 
@@ -3453,8 +3651,8 @@ def main():
 
 
     print(
-        "User ∩ Content:",
-        f"{candidate_df['user_content_overlap'].mean():.2f}"
+        "BPR ∩ Content:",
+        f"{candidate_df['bpr_content_overlap'].mean():.2f}"
     )
 
 
@@ -3465,7 +3663,36 @@ def main():
 
 
     # =====================================================
-    # 12. Candidate Group
+    # Item Cache Statistics
+    # =====================================================
+
+    print(
+        "\n===== Item-Based Cache ====="
+    )
+
+
+    print(
+        "Cache 재사용:",
+        item_model.cache_hit_count
+    )
+
+
+    print(
+        "새로 계산한 Source Item:",
+        item_model.cache_miss_count
+    )
+
+
+    print(
+        "최종 Cached Item:",
+        len(
+            item_model.neighbor_cache
+        )
+    )
+
+
+    # =====================================================
+    # 12. Candidate Group Summary
     # =====================================================
 
     candidate_group = (
@@ -3484,8 +3711,8 @@ def main():
                 "mean",
             ),
 
-            user_recall=(
-                "user_candidate_recall",
+            bpr_recall=(
+                "bpr_candidate_recall",
                 "mean",
             ),
 
@@ -3520,7 +3747,7 @@ def main():
 
 
     print(
-        "\n===== Group별 Candidate ====="
+        "\n===== Review Group별 Candidate 결과 ====="
     )
 
 
@@ -3547,7 +3774,7 @@ def main():
 
 
     # =====================================================
-    # 14. Case 1 Comparison
+    # 14. Case 1 Compare
     # =====================================================
 
     comparison = (
@@ -3566,7 +3793,9 @@ def main():
 
         print(
             "공통 사용자:",
-            len(comparison),
+            len(
+                comparison
+            )
         )
 
 
@@ -3601,39 +3830,93 @@ def main():
 
 
         print(
-            "Δ Precision:",
+            "평균 Δ Precision:",
             f"{comparison['delta_precision'].mean():.6f}"
         )
 
 
         print(
-            "Δ Recall:",
+            "평균 Δ Recall:",
             f"{comparison['delta_recall'].mean():.6f}"
         )
 
 
         print(
-            "Δ NDCG:",
+            "평균 Δ NDCG:",
             f"{comparison['delta_ndcg'].mean():.6f}"
         )
 
 
+        improved_users = int(
+            (
+                comparison[
+                    "delta_hits"
+                ] > 0
+            ).sum()
+        )
+
+
+        worsened_users = int(
+            (
+                comparison[
+                    "delta_hits"
+                ] < 0
+            ).sum()
+        )
+
+
+        same_users = int(
+            (
+                comparison[
+                    "delta_hits"
+                ] == 0
+            ).sum()
+        )
+
+
+        print(
+            "\nHit 변화 사용자"
+        )
+
+
+        print(
+            "개선:",
+            improved_users
+        )
+
+
+        print(
+            "악화:",
+            worsened_users
+        )
+
+
+        print(
+            "동일:",
+            same_users
+        )
+
+
     # =====================================================
-    # 15. Candidate Pool
+    # 15. Candidate Pool DataFrame
     # =====================================================
 
     if len(
         recommender.pool_logs
     ) > 0:
 
-        candidate_pool_df = pd.concat(
-            recommender.pool_logs,
-            ignore_index=True,
+        candidate_pool_df = (
+            pd.concat(
+                recommender.pool_logs,
+                ignore_index=True,
+            )
         )
 
     else:
 
-        candidate_pool_df = pd.DataFrame()
+        candidate_pool_df = (
+            pd.DataFrame()
+        )
 
 
     # =====================================================
@@ -3652,7 +3935,9 @@ def main():
 
 
     pd.DataFrame(
-        [summary]
+        [
+            summary
+        ]
     ).to_csv(
         SUMMARY_PATH,
         index=False,
@@ -3671,12 +3956,6 @@ def main():
     )
 
 
-    candidate_group.to_csv(
-        CANDIDATE_GROUP_PATH,
-        index=False,
-    )
-
-
     candidate_pool_df.to_csv(
         POOL_PATH,
         index=False,
@@ -3691,15 +3970,15 @@ def main():
         )
 
 
-    # =====================================================
-    # Runtime
-    # =====================================================
+    print(EVAL_PATH)
+    print(SUMMARY_PATH)
+    print(GROUP_PATH)
+    print(CANDIDATE_PATH)
+    print(POOL_PATH)
 
-    elapsed = (
-        time.perf_counter()
-        -
-        start_time
-    )
+
+    if comparison is not None:
+        print(COMPARE_PATH)
 
 
     # =====================================================
@@ -3733,8 +4012,8 @@ def main():
 
 
     print(
-        "User Recall:",
-        f"{summary['user_candidate_recall']:.6f}"
+        "BPR Recall:",
+        f"{summary['bpr_candidate_recall']:.6f}"
     )
 
 
@@ -3771,7 +4050,7 @@ def main():
 
 
     print(
-        "\n===== Final BPR Ranking ====="
+        "\n===== Final Ranking Stage ====="
     )
 
 
@@ -3826,66 +4105,52 @@ def main():
 
 
     print(
-        "\n===== Optimization ====="
+        "\n===== Mapping Diagnostic ====="
     )
 
 
     print(
-        "Item Cache Hit:",
+        "BPR mapping 없는 사용자:",
+        recommender.missing_users
+    )
+
+
+    print(
+        "BPR mapping 없는 Candidate:",
+        recommender.missing_candidate_items
+    )
+
+
+    print(
+        "\n===== Item Cache ====="
+    )
+
+
+    print(
+        "Cache Hits:",
         item_model.cache_hit_count
     )
 
 
     print(
-        "Item Cache Miss:",
+        "Cache Miss:",
         item_model.cache_miss_count
     )
 
 
-    print(
-        "User-Based 실행 수:",
-        user_model.recommend_count
-    )
-
+    print()
 
     print(
-        "\n===== BPR Mapping ====="
+        "=========================================="
     )
-
 
     print(
-        "없는 User:",
-        recommender.missing_bpr_users
+        " Experiment B Complete"
     )
-
 
     print(
-        "없는 Candidate:",
-        recommender.missing_bpr_candidates
+        "=========================================="
     )
-
-
-    print(
-        "\n실행시간:",
-        f"{elapsed / 60:.2f}분"
-    )
-
-
-    print(
-        "\n저장 파일:"
-    )
-
-
-    print(EVAL_PATH)
-    print(SUMMARY_PATH)
-    print(GROUP_PATH)
-    print(CANDIDATE_PATH)
-    print(CANDIDATE_GROUP_PATH)
-    print(POOL_PATH)
-
-
-    if comparison is not None:
-        print(COMPARE_PATH)
 
 
 if __name__ == "__main__":
