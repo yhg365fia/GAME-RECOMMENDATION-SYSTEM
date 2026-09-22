@@ -1141,94 +1141,89 @@ def compare_with_baseline(fusion_eval_df):
 
 
 # =========================================================
-# Main
+# Case 3 Ablation
 # =========================================================
 
-def main():
-    total_start = time.time()
+BASE_WEIGHTS = {
+    "item": 0.50,
+    "user": 0.15,
+    "bpr": 0.20,
+    "content": 0.15,
+}
 
-    print("\n==================================================")
-    print(" Hybrid Experiment C - Optimized 4-Model Cached Rank Fusion")
-    print(" Item-Based + User-Based + BPR + Content-Based")
-    print(f" Each Top-{MODEL_TOP_N} -> Fusion -> Top-{TOP_N}")
-    print("==================================================")
 
-    print("\nWeights")
-    print(f"Item    : {ITEM_WEIGHT:.2f}")
-    print(f"User    : {USER_WEIGHT:.2f}")
-    print(f"BPR     : {BPR_WEIGHT:.2f}")
-    print(f"Content : {CONTENT_WEIGHT:.2f}")
+def make_ablation_weights(remove_model=None):
+    """
+    기존 4-model weight 비율을 유지한 채 특정 모델 하나를 제거한다.
+
+    예:
+        Full       = 0.50 / 0.15 / 0.20 / 0.15
+        -User      = 0.50 / 0.00 / 0.20 / 0.15
+                     -> 합 0.85로 나누어
+                     -> 0.5882 / 0 / 0.2353 / 0.1765
+
+    남은 weight에 동일한 상수만 곱하므로 Rank Fusion의 최종 순위는
+    정규화 전후 동일하다. 다만 해석하기 쉽게 합을 1.0으로 맞춘다.
+    """
+
+    weights = BASE_WEIGHTS.copy()
+
+    if remove_model is not None:
+        if remove_model not in weights:
+            raise ValueError(f"알 수 없는 ablation model: {remove_model}")
+        weights[remove_model] = 0.0
+
+    total = sum(weights.values())
+
+    if total <= 0:
+        raise ValueError("남은 Fusion weight가 없습니다.")
+
+    return {
+        key: value / total
+        for key, value in weights.items()
+    }
+
+
+def apply_global_weights(weights):
+    """기존 CachedRankFusionRecommender를 그대로 재사용하기 위한 weight 적용."""
+    global ITEM_WEIGHT, USER_WEIGHT, BPR_WEIGHT, CONTENT_WEIGHT
+
+    ITEM_WEIGHT = float(weights["item"])
+    USER_WEIGHT = float(weights["user"])
+    BPR_WEIGHT = float(weights["bpr"])
+    CONTENT_WEIGHT = float(weights["content"])
+
+
+
+def run_one_ablation(
+    case_name,
+    removed_model,
+    weights,
+    item_cache,
+    user_cache,
+    bpr_cache,
+    content_cache,
+    train_eval,
+    test_eval,
+    sampled_users,
+    ablation_dir,
+):
+    """캐시된 retrieval 결과로 Fusion + 평가만 수행한다."""
+
+    apply_global_weights(weights)
+
+    print("\n" + "=" * 62)
+    print(f" Ablation: {case_name}")
+    print("=" * 62)
+    print(f"Removed : {removed_model if removed_model else 'None (Full)'}")
+    print(f"Item    : {ITEM_WEIGHT:.6f}")
+    print(f"User    : {USER_WEIGHT:.6f}")
+    print(f"BPR     : {BPR_WEIGHT:.6f}")
+    print(f"Content : {CONTENT_WEIGHT:.6f}")
 
     total_weight = ITEM_WEIGHT + USER_WEIGHT + BPR_WEIGHT + CONTENT_WEIGHT
     if not np.isclose(total_weight, 1.0):
         raise ValueError(f"Fusion weight 합이 1.0이 아닙니다: {total_weight}")
-
-    # full split / CF matrix는 정말 필요한 경우에만 lazy-load
-    full_split_holder = {}
-    cf_holder = {}
-
-    # -----------------------------------------------------
-    # 1. 평가 사용자
-    # -----------------------------------------------------
-    sampled_users = load_sampled_users()
-
-    # -----------------------------------------------------
-    # 2. 400명 평가 subset
-    # -----------------------------------------------------
-    train_eval, test_eval = load_or_create_eval_subset(
-        sampled_users,
-        full_split_holder,
-    )
-
-    # -----------------------------------------------------
-    # 3. Item cache
-    # -----------------------------------------------------
-    print("\n===== 3. Item-Based Retrieval Cache =====")
-    item_cache = build_item_cache(
-        sampled_users,
-        train_eval,
-        full_split_holder,
-        cf_holder,
-    )
-    print_cache_coverage("Item", item_cache, sampled_users)
-
-    # -----------------------------------------------------
-    # 4. User-Based cache
-    # -----------------------------------------------------
-    print("\n===== 4. User-Based Retrieval Cache =====")
-    user_cache = build_user_cache(
-        sampled_users,
-        train_eval,
-        full_split_holder,
-        cf_holder,
-    )
-    print_cache_coverage("User", user_cache, sampled_users)
-
-    # -----------------------------------------------------
-    # 5. BPR cache
-    # -----------------------------------------------------
-    print("\n===== 5. BPR Retrieval Cache =====")
-    bpr_cache = build_bpr_cache(sampled_users, train_eval)
-    print_cache_coverage("BPR", bpr_cache, sampled_users)
-
-    # Content item space를 BPR mapping과 동일하게 맞춤
-    _, item_ids = load_bpr_mapping_only()
-
-    # -----------------------------------------------------
-    # 6. Content cache
-    # -----------------------------------------------------
-    print("\n===== 6. Content Retrieval Cache =====")
-    content_cache = build_content_cache(
-        sampled_users,
-        train_eval,
-        item_ids,
-    )
-    print_cache_coverage("Content", content_cache, sampled_users)
-
-    # -----------------------------------------------------
-    # 7. Cached Fusion
-    # -----------------------------------------------------
-    print("\n===== 7. Cached Rank Fusion =====")
 
     fusion_model = CachedRankFusionRecommender(
         item_cache=item_cache,
@@ -1237,10 +1232,6 @@ def main():
         content_cache=content_cache,
     )
 
-    # -----------------------------------------------------
-    # 8. Evaluation
-    # -----------------------------------------------------
-    print("\n===== 8. Case 3 평가 시작 =====")
     eval_start = time.time()
 
     eval_df = run_mf_evaluation(
@@ -1252,20 +1243,21 @@ def main():
         positive_only=True,
     )
 
-    print(f"Fusion 평가 시간: {time.time() - eval_start:.2f}초")
-
-    # -----------------------------------------------------
-    # 9. Report
-    # -----------------------------------------------------
-    print("\n===== 9. Case 3 평가 결과 =====")
+    elapsed = time.time() - eval_start
+    print(f"평가 시간: {elapsed:.2f}초")
 
     group_summary = print_evaluation_report(eval_df, top_n=TOP_N)
     summary = make_summary(eval_df)
 
-    # -----------------------------------------------------
-    # 10. Diagnostics
-    # -----------------------------------------------------
-    print("\n===== 10. Hit Overlap / Unique Hit =====")
+    # make_summary는 기존 함수를 재사용하므로 실험명을 ablation용으로 교체
+    summary["experiment"] = f"case3_ablation_{case_name}"
+    summary["case_name"] = case_name
+    summary["removed_model"] = removed_model if removed_model else "none"
+    summary["item_weight"] = ITEM_WEIGHT
+    summary["user_weight"] = USER_WEIGHT
+    summary["bpr_weight"] = BPR_WEIGHT
+    summary["content_weight"] = CONTENT_WEIGHT
+    summary["evaluation_seconds"] = elapsed
 
     diagnostic_df = build_fusion_diagnostics(
         fusion_model=fusion_model,
@@ -1274,119 +1266,214 @@ def main():
     )
 
     if len(diagnostic_df):
-        item_hits = int(diagnostic_df["item_hits"].sum())
-        user_hits = int(diagnostic_df["user_hits"].sum())
-        bpr_hits = int(diagnostic_df["bpr_hits"].sum())
-        content_hits = int(diagnostic_df["content_hits"].sum())
-        fusion_hits = int(diagnostic_df["fusion_hits"].sum())
-
-        item_unique = int(diagnostic_df["item_unique_hits"].sum())
-        user_unique = int(diagnostic_df["user_unique_hits"].sum())
-        bpr_unique = int(diagnostic_df["bpr_unique_hits"].sum())
-        content_unique = int(diagnostic_df["content_unique_hits"].sum())
-        all_four = int(diagnostic_df["all_four_overlap_hits"].sum())
-        recovered = int(diagnostic_df["fusion_recovered_hits"].sum())
-        lost = int(diagnostic_df["fusion_lost_hits"].sum())
-
-        print("\n각 모델 Top-10 Hits")
-        print("Item-Based :", item_hits)
-        print("User-Based :", user_hits)
-        print("BPR        :", bpr_hits)
-        print("Content    :", content_hits)
-        print("Fusion     :", fusion_hits)
-
-        print("\nUnique Hits")
-        print("Item only    :", item_unique)
-        print("User only    :", user_unique)
-        print("BPR only     :", bpr_unique)
-        print("Content only :", content_unique)
-        print("4개 모델 공통:", all_four)
-
-        print("\nItem-Based 대비 Fusion")
-        print("복구된 정답:", recovered)
-        print("손실된 정답:", lost)
-        print("순증가:", recovered - lost)
-
-        summary.update(
-            {
-                "item_top10_hits": item_hits,
-                "user_top10_hits": user_hits,
-                "bpr_top10_hits": bpr_hits,
-                "content_top10_hits": content_hits,
-                "fusion_top10_hits_diagnostic": fusion_hits,
-                "item_unique_hits": item_unique,
-                "user_unique_hits": user_unique,
-                "bpr_unique_hits": bpr_unique,
-                "content_unique_hits": content_unique,
-                "all_four_overlap_hits": all_four,
-                "fusion_recovered_hits": recovered,
-                "fusion_lost_hits": lost,
-            }
+        summary["fusion_recovered_hits"] = int(
+            diagnostic_df["fusion_recovered_hits"].sum()
+        )
+        summary["fusion_lost_hits"] = int(
+            diagnostic_df["fusion_lost_hits"].sum()
+        )
+        summary["fusion_delta_hits_vs_item"] = int(
+            diagnostic_df["fusion_delta_hits"].sum()
         )
 
-    # -----------------------------------------------------
-    # 10. Baseline comparison
-    # -----------------------------------------------------
-    print("\n===== 11. Item-Based Baseline 비교 =====")
+    case_slug = case_name.lower().replace("-", "_")
 
-    comparison = compare_with_baseline(eval_df)
+    eval_path = ablation_dir / f"{case_slug}_eval.csv"
+    group_path = ablation_dir / f"{case_slug}_group_summary.csv"
+    diagnostic_path = ablation_dir / f"{case_slug}_diagnostics.csv"
 
-    if comparison is not None:
-        baseline_hits = int(comparison["baseline_hits"].sum())
-        fusion_hits = int(comparison["fusion_hits"].sum())
+    eval_df.to_csv(eval_path, index=False)
+    group_summary.to_csv(group_path, index=False)
+    diagnostic_df.to_csv(diagnostic_path, index=False)
 
-        print("공통 평가 사용자:", len(comparison))
-        print("Baseline Hits:", baseline_hits)
-        print("Fusion Hits  :", fusion_hits)
-        print("Delta Hits   :", fusion_hits - baseline_hits)
+    print("저장:", eval_path)
+    print("저장:", group_path)
+    print("저장:", diagnostic_path)
 
-        print("평균 Delta Precision:", f"{comparison['delta_precision'].mean():.6f}")
-        print("평균 Delta Recall   :", f"{comparison['delta_recall'].mean():.6f}")
-        print("평균 Delta NDCG     :", f"{comparison['delta_ndcg'].mean():.6f}")
+    print(
+        f"결과: P@10={summary['precision_at_10']:.6f} | "
+        f"R@10={summary['recall_at_10']:.6f} | "
+        f"HR@10={summary['hit_rate_at_10']:.6f} | "
+        f"NDCG@10={summary['ndcg_at_10']:.6f} | "
+        f"Hits={summary['hits']}"
+    )
 
-        improved = int((comparison["delta_hits"] > 0).sum())
-        worsened = int((comparison["delta_hits"] < 0).sum())
-        same = int((comparison["delta_hits"] == 0).sum())
+    return summary
 
-        print("사용자별 Hit 개선/악화/동일:", improved, worsened, same)
 
-    # -----------------------------------------------------
-    # 11. Save
-    # -----------------------------------------------------
-    print("\n===== 12. 결과 저장 =====")
+# =========================================================
+# Main
+# =========================================================
 
-    eval_df.to_csv(EVAL_PATH, index=False)
-    pd.DataFrame([summary]).to_csv(SUMMARY_PATH, index=False)
-    group_summary.to_csv(GROUP_PATH, index=False)
-    diagnostic_df.to_csv(DIAGNOSTIC_PATH, index=False)
+def main():
+    total_start = time.time()
 
-    if comparison is not None:
-        comparison.to_csv(COMPARE_PATH, index=False)
-
-    print(EVAL_PATH)
-    print(SUMMARY_PATH)
-    print(GROUP_PATH)
-    print(DIAGNOSTIC_PATH)
-
-    if comparison is not None:
-        print(COMPARE_PATH)
-
-    # -----------------------------------------------------
-    # 12. Final
-    # -----------------------------------------------------
     print("\n==================================================")
-    print(" Experiment C Summary")
+    print(" Case 3 Ablation - Cached Rank Fusion")
+    print(" Full + Remove One Model At A Time")
+    print(f" Each Top-{MODEL_TOP_N} -> Fusion -> Top-{TOP_N}")
     print("==================================================")
 
-    print(f"Precision@10: {summary['precision_at_10']:.6f}")
-    print(f"Recall@10:    {summary['recall_at_10']:.6f}")
-    print(f"Hit Rate@10:  {summary['hit_rate_at_10']:.6f}")
-    print(f"NDCG@10:      {summary['ndcg_at_10']:.6f}")
-    print(f"Hits:         {summary['hits']}")
-    print(f"전체 실행 시간: {time.time() - total_start:.1f}초")
+    print("\nBase Weights")
+    print("Item    : 0.50")
+    print("User    : 0.15")
+    print("BPR     : 0.20")
+    print("Content : 0.15")
+    print("\nAblation에서는 제거된 모델을 0으로 두고")
+    print("남은 모델의 상대적 weight 비율을 유지한 채 합을 1.0으로 정규화합니다.")
 
-    print("\n다음 weight 실험부터는 retrieval cache를 그대로 재사용합니다.")
-    print("ITEM_WEIGHT / USER_WEIGHT / BPR_WEIGHT / CONTENT_WEIGHT만 바꿔 다시 실행하면 됩니다.")
+    # full split / CF matrix는 cache 미존재 시에만 lazy-load
+    full_split_holder = {}
+    cf_holder = {}
+
+    # -----------------------------------------------------
+    # 1. 평가 사용자 / subset
+    # -----------------------------------------------------
+    sampled_users = load_sampled_users()
+
+    train_eval, test_eval = load_or_create_eval_subset(
+        sampled_users,
+        full_split_holder,
+    )
+
+    # -----------------------------------------------------
+    # 2. Retrieval caches - 최초 한 번만 준비
+    # -----------------------------------------------------
+    print("\n===== Retrieval Cache 준비 =====")
+
+    item_cache = build_item_cache(
+        sampled_users,
+        train_eval,
+        full_split_holder,
+        cf_holder,
+    )
+    print_cache_coverage("Item", item_cache, sampled_users)
+
+    user_cache = build_user_cache(
+        sampled_users,
+        train_eval,
+        full_split_holder,
+        cf_holder,
+    )
+    print_cache_coverage("User", user_cache, sampled_users)
+
+    bpr_cache = build_bpr_cache(sampled_users, train_eval)
+    print_cache_coverage("BPR", bpr_cache, sampled_users)
+
+    _, item_ids = load_bpr_mapping_only()
+
+    content_cache = build_content_cache(
+        sampled_users,
+        train_eval,
+        item_ids,
+    )
+    print_cache_coverage("Content", content_cache, sampled_users)
+
+    # 큰 full train / matrix가 새로 생성된 경우 ablation 전에 메모리 정리
+    full_split_holder.clear()
+    cf_holder.clear()
+    gc.collect()
+
+    # -----------------------------------------------------
+    # 3. Ablation Cases
+    # -----------------------------------------------------
+    # Full을 같이 실행해야 각 제거 실험의 성능 하락/상승을 같은 조건에서
+    # 바로 비교할 수 있다.
+    ablation_cases = [
+        ("full", None),
+        ("minus_item", "item"),
+        ("minus_user", "user"),
+        ("minus_bpr", "bpr"),
+        ("minus_content", "content"),
+    ]
+
+    ablation_dir = RESULT_DIR / "case3_ablation"
+    ablation_dir.mkdir(parents=True, exist_ok=True)
+
+    summaries = []
+
+    for case_name, removed_model in ablation_cases:
+        weights = make_ablation_weights(removed_model)
+
+        summary = run_one_ablation(
+            case_name=case_name,
+            removed_model=removed_model,
+            weights=weights,
+            item_cache=item_cache,
+            user_cache=user_cache,
+            bpr_cache=bpr_cache,
+            content_cache=content_cache,
+            train_eval=train_eval,
+            test_eval=test_eval,
+            sampled_users=sampled_users,
+            ablation_dir=ablation_dir,
+        )
+
+        summaries.append(summary)
+
+    # -----------------------------------------------------
+    # 4. Full 대비 Delta
+    # -----------------------------------------------------
+    summary_df = pd.DataFrame(summaries)
+
+    full_row = summary_df.loc[summary_df["case_name"] == "full"].iloc[0]
+
+    summary_df["delta_precision_vs_full"] = (
+        summary_df["precision_at_10"] - full_row["precision_at_10"]
+    )
+    summary_df["delta_recall_vs_full"] = (
+        summary_df["recall_at_10"] - full_row["recall_at_10"]
+    )
+    summary_df["delta_hit_rate_vs_full"] = (
+        summary_df["hit_rate_at_10"] - full_row["hit_rate_at_10"]
+    )
+    summary_df["delta_ndcg_vs_full"] = (
+        summary_df["ndcg_at_10"] - full_row["ndcg_at_10"]
+    )
+    summary_df["delta_hits_vs_full"] = (
+        summary_df["hits"] - full_row["hits"]
+    )
+
+    summary_path = ablation_dir / "case3_ablation_summary.csv"
+    summary_df.to_csv(summary_path, index=False)
+
+    # 보기 좋은 콘솔 표
+    display_columns = [
+        "case_name",
+        "removed_model",
+        "item_weight",
+        "user_weight",
+        "bpr_weight",
+        "content_weight",
+        "precision_at_10",
+        "recall_at_10",
+        "hit_rate_at_10",
+        "ndcg_at_10",
+        "hits",
+        "delta_hits_vs_full",
+    ]
+
+    print("\n==================================================")
+    print(" Case 3 Ablation Final Comparison")
+    print("==================================================")
+    print(summary_df[display_columns].to_string(index=False))
+
+    print("\nAblation Summary 저장:")
+    print(summary_path)
+
+    print("\n가중치 확인")
+    for case_name, removed_model in ablation_cases:
+        w = make_ablation_weights(removed_model)
+        print(
+            f"{case_name:14s} | "
+            f"Item={w['item']:.4f}, "
+            f"User={w['user']:.4f}, "
+            f"BPR={w['bpr']:.4f}, "
+            f"Content={w['content']:.4f}"
+        )
+
+    print(f"\n전체 실행 시간: {time.time() - total_start:.1f}초")
+    print("Retrieval cache가 이미 있다면 대부분의 시간은 5회 Fusion 평가에만 사용됩니다.")
 
 
 if __name__ == "__main__":
