@@ -124,6 +124,8 @@ random_state = 42
 
 ### 전체 모델 성능 비교
 
+> **Evaluation note:** 아래에는 서로 다른 실험 시점의 Legacy 결과가 함께 포함되어 있으며, 일부는 split·ground-truth 정의·평가 코드가 완전히 동일하지 않다. 따라서 절대적인 모델 간 우열을 단정하기보다 당시 모델 탐색 흐름을 기록한 참고값으로 본다.
+
 | 모델 | P@10 | R@10 | HR@10 | NDCG@10 |
 |---|---:|---:|---:|---:|
 | Content-Based | 0.0268 | 0.0238 | 0.2250 | 0.0286 |
@@ -133,7 +135,7 @@ random_state = 42
 | Funk SVD unbiased | 0.0037 | 0.0030 | 0.0350 | 0.0042 |
 | **Final BPR** | **0.05225** | **0.06870** | **0.3850** | **0.06968** |
 
-BPR은 Precision에서 User-Based와 거의 비슷하고 Recall/HR/NDCG는 더 높게 나오며, **Item-Based 다음으로 강한 단일 추천 모델**이 되었다. 처음 BPR 성능(P@10 0.0003)이 극히 낮았던 것을 생각하면 단순 parameter tuning 이상의 의미가 있다.
+BPR은 Precision에서 User-Based와 거의 비슷하고 Recall/HR/NDCG는 더 높게 나오며, **Item-Based 다음으로 강한 단일 추천 모델**이 되었다. 초기 Biased Funk-SVD 성능(P@10 0.0003)이 극히 낮았던 것을 생각하면 단순 parameter tuning 이상의 의미가 있다.
 
 ### Iteration은 오늘 재최적화하지 않은 이유
 
