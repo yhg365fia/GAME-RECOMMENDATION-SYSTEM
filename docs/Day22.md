@@ -40,6 +40,8 @@ Candidate Recall@20/50/100/200 실험 설계
 
 ### 2-1. 단일 모델 성능표
 
+> **Evaluation note:** 아래 단일 모델 표에는 서로 다른 실험 시점의 Legacy 결과가 포함되어 있으며, 일부는 split·ground-truth 정의·평가 코드가 완전히 동일하지 않다. 따라서 절대적인 모델 간 성능 비교보다는 Hybrid 설계 당시의 참고 결과로 해석한다.
+
 | 모델 | Precision@10 | Recall@10 | Hit Rate@10 | NDCG@10 |
 | --- | ---: | ---: | ---: | ---: |
 | Content-Based | 0.0268 | 0.0238 | 0.2250 | 0.0286 |
