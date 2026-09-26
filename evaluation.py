@@ -253,10 +253,28 @@ def print_evaluation_report(eval_df, top_n=10):
 
 
 def evaluate_pipeline(recommender, user_history, lower_bound=10, upper_bound=78,
-                       n_groups=3, sample_per_group=1000, top_n=10, random_state=42):
-    user_counts = build_user_review_groups(user_history, lower_bound, upper_bound, n_groups)
-    sampled_users = stratified_sample_users(user_counts, sample_per_group, random_state)
-    eval_df = run_evaluation(recommender, user_history, sampled_users, top_n, random_state=random_state)
+                       n_groups=3, sample_per_group=1000, top_n=10, random_state=42,
+                       user_to_idx=None):
+    # n_groups is kept for backward compatibility; fixed review bins are defined
+    # inside build_user_review_groups().
+    user_counts = build_user_review_groups(
+        user_history,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+    sampled_users = stratified_sample_users(
+        user_counts,
+        sample_per_group=sample_per_group,
+        random_state=random_state,
+    )
+    eval_df = run_evaluation(
+        recommender,
+        user_history,
+        sampled_users,
+        user_to_idx=user_to_idx,
+        top_n=top_n,
+        random_state=random_state,
+    )
     summary = print_evaluation_report(eval_df, top_n)
     return eval_df, summary
 
