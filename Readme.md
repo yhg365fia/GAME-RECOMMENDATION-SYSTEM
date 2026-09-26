@@ -1,310 +1,147 @@
 # 🎮 Steam Game Recommendation System
 
-Steam 게임 데이터를 활용해 **Content-Based / Collaborative Filtering / Matrix Factorization / Pairwise Ranking / Hybrid Recommendation**을 단계적으로 구현하고, 동일한 평가 환경에서 추천 구조와 성능을 비교하는 프로젝트입니다.
+Steam 게임 데이터를 활용해 **Content-Based / Collaborative Filtering / Matrix Factorization / Pairwise Ranking / Hybrid Recommendation / Learning-to-Rank**를 단계적으로 구현하고, 동일한 데이터 파이프라인 안에서 추천 구조와 성능을 비교한 프로젝트입니다.
 
 이 프로젝트의 핵심은 단순히 여러 추천 모델을 구현하는 데 그치지 않고, **각 모델이 어떤 signal을 학습하는지 분석하고 Retrieval과 Ranking의 역할을 분리해 최종 Hybrid Architecture를 설계하는 것**입니다.
+
+또한 프로젝트 후반에는 단순 성능 비교를 넘어 **평가 방식 검증, Candidate Search, Feature Ablation, Multi-Seed Stability, Cold-Start, Popularity / Novelty 분석, Runtime 최적화**까지 확장했습니다.
 
 ---
 
 ## 🚀 At a Glance
 
-| 항목 | 현재 상태 |
+| 항목 | 최종 상태 |
 |---|---|
-| 데이터 | Steam 약 4,115만 interaction |
-| 평가 방식 | Global Train/Test Split + 고정 평가 사용자 400명 |
-| 최종 출력 | Top-10 Recommendation |
-| 현재 Architecture | **BPR 56 + Content 39 + User-Based 5 → Item-Based Ranker** |
-| Candidate Budget | **100** |
-| 현재 최고 P@10 | **0.08722** |
-| 현재 최고 R@10 | **0.11102** |
-| 현재 최고 HR@10 | **0.5400** |
-| 현재 최고 NDCG@10 | **0.12155** |
-| 현재 단계 | **Hybrid 미세조정 완료 → Learning-to-Rank 실험 및 최종 시스템 통합 단계** |
+| 데이터 | Steam 약 **4,115만 interactions** |
+| Train / Test | **37,113,471 / 4,041,323** |
+| LTR 학습 사용자 | **1,000명** |
+| 최종 평가 사용자 | **고정 Final400** |
+| 최종 출력 | **Top-10 Recommendation** |
+| 최종 Architecture | **4-Retriever + XGBoost LambdaMART** |
+| Candidate | **Item 46 + BPR 20 + Content 15 + User 20** |
+| Candidate Budget | **최대 101** |
+| Feature | **Full15** |
+| Final Ranker | **XGBoost `rank:ndcg`** |
+| 최종 NDCG@10 | **0.139857** |
+| 최종 MAP@10 | **0.069833** |
+| 프로젝트 상태 | **실험 종료 / 최종 문서화 단계** |
 
-### Current Recommendation Architecture
+### Final Recommendation Architecture
 
 ```text
-User History
-    │
-    ├── BPR Retriever ───────────── Top-56
-    ├── Content-Based Retriever ─── Top-39
-    └── User-Based CF Retriever ─── Top-5
-                    │
-                    ▼
-             Candidate UNION
-             Budget ≈ 100
-                    │
-                    ▼
-            Item-Based Ranker
-                    │
-                    ▼
-               Top-10
+                         User History
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+   Item-CF Retriever     BPR Retriever      Content Retriever
+        Top-46              Top-20              Top-15
+          │                   │                   │
+          └──────────────┬────┴──────────────┬────┘
+                         │                   │
+                         │             User-CF Retriever
+                         │                  Top-20
+                         │                   │
+                         └──────────┬────────┘
+                                    ▼
+                          Candidate UNION
+                              max 101
+                                    │
+                                    ▼
+                         Full15 Feature Set
+                                    │
+                                    ▼
+                      XGBoost LambdaMART Ranker
+                                    │
+                                    ▼
+                           Top-10 Recommendation
 ```
 
-현재 구조는 **semi-confirmed Final Baseline Architecture**입니다.  
-Retriever 비율 Fine-Tuning과 BPR Hyperparameter Search까지 완료했으며, 이제 Candidate 구조는 유지한 채 **Learning-to-Rank(XGBoost Ranker / LambdaMART)가 Item-Based Ranker보다 더 나은 최종 순서를 학습할 수 있는지 검증**하는 단계입니다.
+> 최종 구조는 **Retriever가 다양한 후보를 확보하고, XGBoost Ranker가 여러 모델의 score / rank / context를 함께 학습해 최종 순서를 결정하는 2-stage recommendation architecture**입니다.
 
 ---
 
-# 📊 Current Best Result
+# 📊 Final Result
 
-Hybrid 실험은 모두 **같은 Global Split / 같은 평가 사용자 400명 / 같은 Positive 정의 / 같은 Top-K / 같은 Evaluator**를 사용합니다.
+최종 모델 `E_HR`은 **LTR1000 내부에서 Candidate / Feature / XGBoost를 탐색하고, Feature Ablation과 3-Seed Stability를 거쳐 확정**했습니다.
 
-| Metric | Item-Based Hybrid Baseline | **현재 반확정 구조** | 개선폭 |
-|---|---:|---:|---:|
-| Precision@10 | 0.06325 | **0.08722** | +37.9% |
-| Recall@10 | 0.08144 | **0.11102** | +36.3% |
-| Hit Rate@10 | 0.3925 | **0.5400** | +37.6% |
-| NDCG@10 | 0.09129 | **0.12155** | +33.2% |
-| Hits | 253 | **348** | +95 |
+그 뒤 **LTR1000 전체로 Final Ranker를 다시 학습**하고, 모델 선택에 사용하지 않은 **원본 Final400에서 한 번 최종 평가**했습니다.
 
----
+## Final400
 
-
-# 🧪 Day25 — Final Fine-Tuning & Learning-to-Rank Transition
-
-Day25에서는 기존 Hybrid 구조를 더 이상 크게 바꾸지 않고, **현재 구조 내부의 마지막 미세조정과 Ranker 개선 가능성**을 검토했습니다.
-
-## Retriever Ratio Fine-Tuning
-
-Candidate Size=100, User-Based=5를 고정하고 BPR / Content 비율을 미세하게 조정했습니다.
-
-| BPR / Content / User | Avg UNION | Scoreable | UNION Recall | Scoreable Recall | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 50 / 45 / 5 | 95.38 | 32.79 | 0.2453 | 0.2038 | 0.08656 | **0.11111** | 0.5300 | **0.12157** | 345 |
-| 53 / 42 / 5 | 95.38 | 33.27 | 0.2470 | 0.2050 | 0.08672 | 0.11072 | 0.5325 | 0.12120 | 346 |
-| **56 / 39 / 5** | 95.36 | 33.70 | 0.2488 | 0.2055 | **0.08722** | 0.11102 | **0.5400** | 0.12155 | **348** |
-| 59 / 36 / 5 | 95.44 | 34.15 | 0.2538 | 0.2087 | 0.08666 | 0.10997 | 0.5350 | 0.12139 | 346 |
-| 62 / 33 / 5 | 95.49 | 34.66 | **0.2540** | **0.2097** | 0.08612 | 0.10957 | 0.5275 | 0.12087 | 344 |
-
-### Result
-
-BPR 비율이 커질수록 Candidate Recall / Scoreable Recall은 증가했지만 최종 Top-10 성능은 개선되지 않았습니다.
-
-```text
-Candidate Recall ↑
-        ≠
-Final Ranking Performance ↑
-```
-
-따라서 Retriever 비율은 기존 **BPR56 + Content39 + User5**를 유지합니다.
-
----
-
-## BPR 27-Case Grid Search
-
-Hybrid Candidate 구조를 고정하고 BPR의:
-
-```text
-factors        = [40, 60, 80]
-regularization = [0.002, 0.006, 0.010]
-iterations     = [10, 15, 20]
-```
-
-을 조합해 총 **27개 모델**을 비교했습니다.
-
-### Best BPR
-
-| Parameter / Metric | Result |
+| Metric | Final E_HR |
 |---|---:|
-| Factors | **60** |
-| Regularization | **0.006** |
-| Iterations | **15** |
-| BPR Candidate Recall | **0.183040** |
-| UNION Candidate Recall | **0.248277** |
-| Item Scoreable Recall | **0.205562** |
-| Precision@10 | **0.086599** |
-| Recall@10 | **0.109385** |
-| HR@10 | **0.522500** |
-| NDCG@10 | **0.120657** |
-| Hits | **345** |
+| Users | **400** |
+| Precision@10 | **0.096250** |
+| Recall@10 | **0.127890** |
+| Hit Rate@10 | **0.570000** |
+| NDCG@10 | **0.139857** |
+| MAP@10 | **0.069833** |
+| Candidate Recall | **0.272015** |
+| Mean Log Popularity@10 | **10.252428** |
+| Novelty@10 | **10.354832** |
+| Total Hits | **385** |
 
-2위 조합인 `factors=40 / reg=0.01 / iterations=20`은 UNION Candidate Recall이 **0.252776**으로 더 높았지만, NDCG@10은 **0.117489**로 낮았습니다.
+### Review Group별 결과
 
-이 실험에서도 다시 **Retriever 품질과 Final Ranking 품질은 별개의 문제**임을 확인했습니다.
+| Review Group | P@10 | R@10 | HR@10 | NDCG@10 | MAP@10 | Cand. Recall | Mean Log Pop. | Novelty |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10–15개 | 0.054 | **0.143333** | 0.34 | 0.126247 | **0.080001** | **0.292667** | 10.450322 | 10.069126 |
+| 16–25개 | 0.072 | 0.137786 | 0.50 | 0.121104 | 0.060314 | 0.275440 | 10.233539 | 10.382083 |
+| 26–45개 | 0.107 | 0.129295 | 0.67 | 0.142498 | 0.064291 | 0.274840 | 10.288286 | 10.302900 |
+| 46–78개 | **0.152** | 0.101148 | **0.77** | **0.169579** | 0.074725 | 0.245115 | **10.037565** | **10.665218** |
 
-Final BPR:
+활동량이 많은 사용자일수록 **Precision / HR / NDCG가 상승**하는 경향을 보였습니다.
 
-```python
-iterations = 15
-factors = 60
-learning_rate = 0.05
-regularization = 0.006
-
-explicit_false = True
-explicit_false_epochs = 1
-explicit_false_learning_rate = 0.01
-explicit_false_regularization = 0.001
-```
+반면 Recall과 Candidate Recall은 감소했는데, 활동량이 많은 사용자는 Test Positive 자체가 많아 **Top-10만으로 전체 정답을 회수하기 더 어려운 영향**도 함께 존재합니다.
 
 ---
 
-## Why Learning-to-Rank Next?
+# 🧭 Project Evolution
 
-현재 Item-Based Ranker는 Candidate 100에서는 강하지만 Candidate Size를 150 / 200으로 늘렸을 때 추가 정답을 충분히 Top-10으로 끌어올리지 못했습니다.
+프로젝트는 단일 모델 구현에서 시작해 최종적으로 **Multi-Retriever + Learning-to-Rank 시스템**으로 확장되었습니다.
 
-따라서 다음 실험은 Candidate Retriever를 바꾸지 않고:
-
-```text
-BPR56 + Content39 + User5
-        ↓
-Candidate UNION
-        ↓
-[기존] Item-Based Ranker
-
-vs
-
-BPR56 + Content39 + User5
-        ↓
-Candidate UNION
-        ↓
-[실험] XGBoost Ranker (LambdaMART)
-```
-
-로 **Ranker만 교체**해서 비교합니다.
+| 단계 | 핵심 작업 | 결정 |
+|---|---|---|
+| 1 | Content / User / Item CF 구현 | Item-CF가 강한 co-consumption signal을 보임 |
+| 2 | Funk-SVD 실험 | Rating objective와 Top-N ranking 목적 불일치 확인 |
+| 3 | Implicit BPR + Explicit False FT | BPR을 강한 Candidate Retriever로 사용 |
+| 4 | Item→BPR / BPR→Item Reranking | Retrieval과 Ranking 역할 분리 필요성 확인 |
+| 5 | Multi-Retriever / Rank Fusion | 서로 다른 모델이 서로 다른 정답을 보완 |
+| 6 | Item-Based Ranker Hybrid | `BPR56 + Content39 + User5 → Item Ranker` 확보 |
+| 7 | XGBoost LTR 도입 | 고정 rule보다 여러 model signal을 함께 학습 |
+| 8 | 4-Retriever 확장 | Item-CF도 Candidate Retriever로 포함 |
+| 9 | Candidate / Ratio / Feature / XGB Search | Optuna + Sweep 기반 탐색 |
+| 10 | Evaluation 재설계 | Candidate 내부 NDCG → Actual Top-10 평가 |
+| 11 | Ablation / Stability | Feature 기여와 Seed 민감도 검증 |
+| 12 | Final E_HR | `I46+B20+C15+U20 → Full15 → XGB` 확정 |
+| 13 | Final400 / Qualitative | 정확도 + Popularity / Novelty + Cold-Start 분석 |
+| 14 | Runtime Optimization | Batch / Cache / Sparse 연산으로 반복 평가 최적화 |
 
 ---
-
-## Learning-to-Rank Feature Plan
-
-Feature를 한 번에 많이 넣지 않고, **Ablation 형태로 단계적으로 추가**합니다.
-
-### Experiment 1 — Model Signal Only
-
-각 모델의 normalized score + candidate set 내부 rank:
-
-```text
-item_score_norm
-bpr_score_norm
-content_score_norm
-user_score_norm
-
-item_rank
-bpr_rank
-content_rank
-user_rank
-```
-
-**총 8개 Feature**
-
-목적:
-
-> 기존 네 추천 모델의 출력만으로 XGBoost Ranker가 Item-Based Ranker를 이길 수 있는가?
-
-### Experiment 2 — Candidate / User Context
-
-Exp1 +
-
-```text
-source_count
-user_interaction_count
-```
-
-**총 10개 Feature**
-
-- `source_count`: Candidate를 몇 Retriever가 동시에 추천했는가
-- `user_interaction_count`: 사용자의 Train interaction 수
-
-### Experiment 3 — Item Statistics
-
-Exp2 +
-
-```text
-game_popularity
-game_positive_ratio
-```
-
-**총 12개 Feature**
-
-- `game_popularity`: Train interaction count
-- `game_positive_ratio`: Train에서 positive feedback 비율
-
-모든 Item 통계는 **Train data에서만 계산**해 Test Leakage를 방지합니다.
-
-### Optional
-
-Exp3까지 확인한 뒤 필요할 때만:
-
-```text
-genre_similarity
-tag_similarity
-developer_similarity
-publisher_similarity
-```
-
-등을 추가합니다.
-
-프로젝트 막바지이므로 Feature를 무작정 늘리지 않고 **Exp1 → Exp2 → Exp3의 증가분을 비교**해 최종 Feature Set을 결정합니다.
-
----
-
-## LTR Train / Validation / Final Test
-
-기존 Hybrid 평가 사용자 400명은 계속 **Final Evaluation 전용**으로 유지합니다.
-
-```text
-LTR Users ≈ 1,000
-├── Train      ≈ 800
-└── Validation ≈ 200
-
-Final Test
-└── 기존 고정 400명
-```
-
-한 사용자의 Candidate Set이 하나의 Ranking Query가 됩니다.
-
-XGBoost 입력 한 행은:
-
-```text
-(user_id, candidate_app_id)
-```
-
-이며 `user_id`, `app_id`는 identifier이고 실제 Feature에는 포함하지 않습니다.
-
----
-
-## LTR Runtime Strategy
-
-첫 실행의 가장 큰 병목은 XGBoost 자체가 아니라 **BPR / Content / User-CF / Item-CF score를 Candidate별로 생성하는 Feature Engineering**입니다.
-
-예상 최초 실행시간:
-
-| 단계 | 예상 |
-|---|---:|
-| Train / Interaction Matrix 준비 | 2~8분 |
-| LTR 1,000명 Feature 생성 | 30~90분 |
-| XGBRanker 학습 | 수십 초~2분 |
-| Final 400명 Feature 생성 + 평가 | 10~35분 |
-| **전체 최초 실행** | **약 45분~2시간** |
-
-한 번 Feature Cache를 만들고 나면 이후 Exp1/2/3과 XGBoost Hyperparameter 실험은 훨씬 빠르게 반복할 수 있습니다.
-
----
-
 
 # 🧠 Key Conclusions
 
-프로젝트를 진행하며 얻은 핵심 결론입니다.
+1. **Retrieval과 Ranking은 별개의 문제였습니다.**  
+   Candidate Recall이 높아져도 최종 Top-10 성능이 반드시 좋아지지는 않았습니다.
 
-1. **모델 복잡도보다 데이터 구조와 추천 목적이 더 중요했습니다.**
-   - Funk SVD는 rating prediction에는 적합하지만 Top-N ranking 목적과 맞지 않아 성능이 매우 낮았습니다.
-   - 반대로 Item-Based CF는 Steam 데이터의 강한 co-consumption signal을 잘 활용했습니다.
+2. **Candidate Recall은 Final Objective가 아니라 Diagnostic Metric입니다.**  
+   Retriever가 충분한 정답 후보를 확보해야 하지만, 최종 선택은 P/R/NDCG/MAP와 함께 판단해야 했습니다.
 
-2. **Retrieval과 Ranking은 별개의 문제였습니다.**
-   - Candidate Recall이 높아져도 최종 Top-10 성능이 반드시 좋아지지는 않았습니다.
-   - Candidate를 많이 확보하는 모델과 최종 순서를 잘 정하는 모델의 역할을 분리했습니다.
+3. **평가 정의가 모델 선택보다 먼저였습니다.**  
+   Candidate 내부에서만 NDCG를 계산했을 때 작은 Candidate가 비정상적으로 유리해지는 artifact를 발견했습니다.
 
-3. **같은 모델을 Retriever와 Ranker에 동시에 쓰면 self-ranking 문제가 발생할 수 있습니다.**
-   - BPR Retriever → BPR Ranker에서는 이미 BPR이 높게 평가한 후보를 다시 BPR로 정렬해 Pure BPR Top-10과 동일해지는 현상을 확인했습니다.
+4. **Optuna의 Best Trial 하나가 곧 최종 모델은 아니었습니다.**  
+   Cheap CV → Stronger CV → Ablation → Multi-Seed Stability 순서로 다시 검증했습니다.
 
-4. **Item-Based CF는 최종 Ranker 역할에서 가장 강했습니다.**
-   - Cross-Ranker 실험에서 Candidate Recall이 더 높은 조합보다 Item-Based Ranker를 쓴 구조가 최종 성능에서 우세했습니다.
+5. **Feature는 많다고 항상 좋은 것이 아니었습니다.**  
+   `user_popularity_affinity`는 제거했을 때 성능이 개선됐고, `retriever_count`는 여러 후보에서 반복적으로 중요한 feature였습니다.
 
-5. **User-Based CF는 약하지만 보완적인 signal이 있었습니다.**
-   - 메인 모델로는 약했지만 5% 수준의 Retriever로 추가했을 때 Unique Hit을 확보하며 최종 성능을 개선했습니다.
+6. **Long-tail signal도 학습할 수 있지만 Popular signal과 섞이면 밀릴 수 있었습니다.**  
+   Long-tail만 입력했을 때는 niche 취향을 잘 유지했지만, Popular + Long-tail 혼합에서는 인기 signal이 강하게 우세했습니다.
 
-6. **Candidate Size는 클수록 좋은 것이 아니었습니다.**
-   - 50 / 100 / 150 / 200을 비교한 결과 Candidate Recall은 계속 증가했지만 최종 Top-10은 **100**에서 가장 좋았습니다.
+7. **실제 병목은 마지막 XGBoost보다 Retrieval / Feature Generation이었습니다.**  
+   대규모 sparse similarity 계산을 Batch / Cache / Precompute하는 것이 반복 실험 가능성을 크게 좌우했습니다.
 
 ---
 
@@ -312,212 +149,319 @@ XGBoost 입력 한 행은:
 
 ## Standalone Model Comparison
 
-| 모델 | P@10 | R@10 | HR@10 | NDCG@10 | 비고 |
+| 모델 | P@10 | R@10 | HR@10 | NDCG@10 | 핵심 해석 |
 |---|---:|---:|---:|---:|---|
-| Content-Based (TF-IDF) | 0.0268 | 0.0238 | 0.2250 | 0.0286 | 콘텐츠 semantic 유사성 |
-| User-Based CF | 0.0545 | 0.0427 | 0.3011 | 0.0655 | User neighborhood, Sparsity에 취약 |
-| **Item-Based CF** | **0.0783** | **0.0880** | **0.4800** | **0.1078** | **Standalone 최고 성능**, 강한 co-consumption signal |
-| Funk SVD (biased) | 0.0003 | 0.0006 | 0.0025 | 0.0004 | item bias가 랭킹 지배 |
-| Funk SVD (unbiased) | 0.0037 | 0.0030 | 0.0350 | 0.0042 | bias 제거로 개선되나 절대 성능 낮음 |
-| **Final BPR** | **0.05225** | **0.06870** | **0.3850** | **0.06968** | Explicit False 활용 + 최종 튜닝 |
+| Content-Based (TF-IDF) | 0.0268 | 0.0238 | 0.2250 | 0.0286 | Metadata semantic similarity |
+| User-Based CF | 0.0545 | 0.0427 | 0.3011 | 0.0655 | 개인화 가능하지만 sparsity 영향 큼 |
+| **Item-Based CF** | **0.0783** | **0.0880** | **0.4800** | **0.1078** | Standalone에서 가장 강한 signal |
+| Funk-SVD (biased) | 0.0003 | 0.0006 | 0.0025 | 0.0004 | Item bias가 ranking 지배 |
+| Funk-SVD (unbiased) | 0.0037 | 0.0030 | 0.0350 | 0.0042 | Bias 제거 후 개선, 절대 성능은 낮음 |
+| Final BPR | 0.05225 | 0.06870 | 0.3850 | 0.06968 | Retriever로 높은 활용 가치 |
 
-> Standalone 성능 자체보다 Hybrid 단계에서는 **각 모델이 다른 모델이 놓친 정답을 보완하는가**를 더 중요하게 평가했습니다.
+> Hybrid 단계에서는 standalone score만이 아니라 **각 모델이 다른 모델이 놓친 정답을 보완하는지**를 함께 봤습니다.
 
-## Hybrid Architecture Comparison
+## Hybrid Architecture Progression
 
-| 단계 | 구조 | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---|---|---:|---:|---:|---:|---:|
-| Baseline | Item-Based 단독 | 0.0633 | 0.0814 | 0.3925 | 0.0913 | 253 |
-| Case 1 | Item Top-30 → BPR Rerank | 0.0695 | 0.0888 | 0.4525 | 0.0978 | 278 |
-| Case 1 Reverse | BPR Top-30 → Item Rerank | 0.0695 | 0.0874 | 0.4675 | 0.0977 | 278 |
-| Case 2 (1차) | Multi-Retriever → BPR Ranking | 0.0673 | 0.0862 | 0.4425 | 0.0953 | 269 |
-| Case 3 (초기) | 4-Model Weighted Rank Fusion | 0.0775 | 0.1001 | 0.4675 | 0.1134 | 310 |
-| Case 3 (User 5%) | Item .5588 + BPR .2235 + Content .1676 + User .05 | 0.0800 | 0.1027 | 0.4825 | 0.1148 | 320 |
-| Cross-Ranker | BPR59 + Content41 → Item Ranker | 0.0827 | 0.1061 | 0.5225 | 0.1168 | 330 |
-| **Case 2 최종** | **BPR56 + Content39 + User5 → Item Ranker** | **0.0872** | **0.1110** | **0.5400** | **0.1216** | **348** |
+| 단계 | 구조 | P@10 | R@10 | HR@10 | NDCG@10 | MAP@10 | Hits |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Baseline | Item-Based | 0.0633 | 0.0814 | 0.3925 | 0.0913 | - | 253 |
+| Case 1 | Item Top-30 → BPR Rerank | 0.0695 | 0.0888 | 0.4525 | 0.0978 | - | 278 |
+| Case 1 Reverse | BPR Top-30 → Item Rerank | 0.0695 | 0.0874 | 0.4675 | 0.0977 | - | 278 |
+| Case 2 | Multi-Retriever → BPR Ranker | 0.0673 | 0.0862 | 0.4425 | 0.0953 | - | 269 |
+| Case 3 | 4-Model Weighted Fusion | 0.0775 | 0.1001 | 0.4675 | 0.1134 | - | 310 |
+| Fusion User 5% | Weighted Fusion | 0.0800 | 0.1027 | 0.4825 | 0.1148 | - | 320 |
+| Cross-Ranker | BPR59 + Content41 → Item Ranker | 0.0827 | 0.1061 | 0.5225 | 0.1168 | - | 330 |
+| Item-Ranker Hybrid | BPR56 + Content39 + User5 → Item | 0.0872 | 0.1110 | 0.5400 | 0.1216 | - | 348 |
+| XGB Full14 | 4-Retriever → XGBoost | 0.0938 | 0.1270 | **0.5775** | 0.1326 | 0.0635 | 375 |
+| **Final E_HR** | **I46+B20+C15+U20 → XGBoost** | **0.09625** | **0.12789** | 0.5700 | **0.139857** | **0.069833** | **385** |
+
+> 앞 단계의 실험 결과는 구조 탐색 과정의 historical result이고, **최종 공식 성능은 마지막 Final400 평가 결과**입니다.
 
 ---
 
-# 🧩 Hybrid Architecture Experiments
+# 🧪 Learning-to-Rank & Final Model Selection
 
-## 1. Case 1 — Reranking
+## 1. Why Learning-to-Rank?
+
+Item-Based Ranker는 Candidate 100에서 강했지만 Candidate를 150 / 200으로 늘리면 **Candidate Recall은 증가해도 추가 정답을 Top-10으로 충분히 끌어올리지 못했습니다.**
 
 ```text
-Item-Based Top-30 → BPR Reranking → Top-10
-BPR Top-30        → Item-Based Reranking → Top-10
+Candidate Recall ↑
+        ≠
+Final Ranking Performance ↑
 ```
 
-| 실험 | Hits |
+그래서 Candidate를 확보하는 Retriever와 최종 순서를 학습하는 Ranker를 분리하고, 여러 Retriever의 정보를 동시에 사용할 수 있는 **XGBoost LambdaMART**를 도입했습니다.
+
+---
+
+## 2. Evaluation Redesign
+
+초기 Joint Search에서는 Candidate Size가 작을수록 내부 NDCG가 비정상적으로 증가했습니다.
+
+```text
+Candidate Size ↓
+→ Candidate Recall ↓
+→ Candidate 내부 NDCG ↑
+```
+
+원인은 **Candidate에 들어오지 못한 실제 Test Positive가 평가에서 충분히 패널티되지 않았기 때문**이었습니다.
+
+따라서 이후 모든 Search / Optuna / Ablation에서는:
+
+```text
+전체 Test Positive
+        ↓
+최종 Top-10 Recommendation
+        ↓
+Actual Precision / Recall / HR / NDCG / MAP
+```
+
+기준을 사용했습니다.
+
+> **잘못 정의된 Metric을 정확하게 최적화하면 잘못된 모델을 매우 효율적으로 찾을 수 있다**는 것이 프로젝트에서 가장 중요한 학습 중 하나였습니다.
+
+---
+
+## 3. Search Process
+
+```text
+Candidate Trade-off Sweep
+        ↓
+Constrained Optuna (50~90)
+        ↓
+Upper-Bound Sweep (80~120)
+        ↓
+Final Joint Optuna (90~130)
+        ↓
+Top Candidates A~E
+        ↓
+Feature Ablation
+        ↓
+3-Seed Stability
+        ↓
+Final E_HR
+```
+
+### Guardrail
+
+Search 단계:
+
+```text
+Precision@10 >= 0.1065
+Recall@10    >= 0.1065
+```
+
+Final 5-Fold 재검증:
+
+```text
+Precision@10 >= 0.1070
+Recall@10    >= 0.1070
+```
+
+Guardrail을 통과한 설정 중 **Macro NDCG@10**을 Primary Objective로 사용했습니다.
+
+---
+
+## 4. Final Candidates
+
+| 후보 | Size | I/B/C/U | Features | 역할 / 강점 |
+|---|---:|---|---:|---|
+| A | 100 | 45/20/15/20 | 16 | NDCG / MAP |
+| B | 92 | 42/18/23/9 | 14 | Recall |
+| C | 105 | 47/21/16/21 | 14 | Precision / Candidate Recall |
+| D | 93 | 42/19/23/9 | 14 | Fold Stability |
+| **E** | **101** | **46/20/15/20** | **15** | **HR + Ablation 후 균형** |
+
+### Feature Ablation
+
+E의 초기 Full16에서 `user_popularity_affinity`를 제거했을 때:
+
+| 설정 | P@10 | R@10 | HR@10 | NDCG@10 | MAP@10 | Hits |
+|---|---:|---:|---:|---:|---:|---:|
+| Full16 | 0.1096 | 0.1110 | 0.622 | 0.1447 | 0.0684 | 1096 |
+| **- PopAffinity** | **0.1105** | 0.1113 | **0.623** | **0.1450** | **0.0692** | **1105** |
+| - RetrieverCount | 0.1095 | **0.1115** | 0.617 | 0.1436 | 0.0677 | 1095 |
+| Full14 | 0.1101 | **0.1115** | 0.620 | 0.1435 | 0.0677 | 1101 |
+
+따라서 **E = Full15**로 확정했습니다.
+
+---
+
+## 5. 3-Seed Stability
+
+Candidate / Feature / XGBoost 조건은 고정하고, LTR1000의 5-Fold split seed만 바꿔 다시 평가했습니다.
+
+| 후보 | Avg P@10 | Avg R@10 | Avg HR@10 | Avg NDCG | Avg MAP | Seed NDCG Std |
+|---|---:|---:|---:|---:|---:|---:|
+| **E** | **0.110533** | 0.111385 | **0.624667** | **0.145155** | **0.069112** | 0.000977 |
+| A | 0.109767 | 0.110979 | 0.618000 | 0.145059 | 0.069087 | **0.000667** |
+| D | 0.110133 | **0.111525** | 0.621333 | 0.145009 | 0.068666 | 0.001941 |
+| C | 0.110133 | 0.111121 | 0.621667 | 0.144881 | 0.068767 | 0.002064 |
+| B | 0.110067 | 0.111407 | 0.617000 | 0.144342 | 0.068749 | 0.000755 |
+
+Primary Metric을 사후 변경하지 않고 **3-Seed 평균 Macro NDCG@10** 기준을 유지해 E를 최종 선택했습니다.
+
+최종 모델명은 **`E_HR`**입니다.
+
+---
+
+# 🧩 Final E_HR Design
+
+## Candidate Retriever
+
+| Retriever | Top-N |
 |---|---:|
-| Item-Based Baseline | 253 |
-| Item → BPR | 278 |
-| BPR → Item | 278 |
+| Item-Based CF | **46** |
+| BPR | **20** |
+| Content-Based | **15** |
+| User-Based CF | **20** |
+| Candidate Union | **max 101** |
 
-두 방향 모두 자체 Top-10이 놓친 정답을 더 넓은 Candidate 안에서 재발견했습니다.
-
-Candidate Generation만 보면:
-
-- Item-Based Recall@30: **0.1491**, Hits **468**
-- BPR Recall@30: **0.1350**, Hits **422**
-
-Reverse 실험에서는 Item-Based scoring 특성상 각 source item의 Top-K neighbor를 전체 item 공간에서 찾아야 해 느렸습니다.
-
-최적화 과정:
+## Full15 Features
 
 ```text
-초기 평가 약 1847.7초
-        ↓
-unique source item만 계산
-+ norm 사전 계산
-+ batch sparse multiplication
-+ Item→Item Top-K cache
-        ↓
-cache 구축 포함 234.7초
-        ↓
-cached reranking 자체 약 0.3초
+# Retriever Scores
+item_score_norm
+bpr_score_norm
+content_score_norm
+user_score_norm
+
+# Retriever Ranks
+item_rank
+bpr_rank
+content_rank
+user_rank
+
+# Agreement
+retriever_count
+
+# Candidate Source
+is_item_candidate
+is_bpr_candidate
+is_content_candidate
+is_user_candidate
+
+# Context
+item_popularity
+user_interaction_count
 ```
+
+`user_popularity_affinity`는 Ablation에서 제거 시 성능이 개선되어 최종 Feature에서 제외했습니다.
+
+## Final XGBoost
+
+| Parameter | Value |
+|---|---:|
+| objective | `rank:ndcg` |
+| eval_metric | `ndcg@10` |
+| n_estimators | **54** |
+| max_depth | 5 |
+| min_child_weight | 2 |
+| learning_rate | 0.0428417863 |
+| subsample | 0.8621568879 |
+| colsample_bytree | 0.7010833569 |
+| reg_lambda | 0.8133078460 |
+| reg_alpha | 0.4952702650 |
+| tree_method | `hist` |
+| random_state | 42 |
+
+Cross Validation에서 확인한 `best_iteration` median을 기준으로 최종 `n_estimators=54`를 사용했습니다.
 
 ---
 
-## 2. Case 2 — Multi-Retriever → Ranker
+# 👤 New User / Cold-Start
 
-초기 구조:
+기존 BPR에는 신규 사용자의 user factor가 없기 때문에 플레이한 게임의 item embedding을 이용해 새로운 user vector를 초기화합니다.
 
 ```text
-Item-Based + User-Based + Content
-              ↓
-            UNION
-              ↓
-          BPR Ranking
-              ↓
-            Top-10
+Played Games
+      ↓
+BPR Item Embeddings
+      ↓
+Embedding Mean
+      ↓
+Initial User Vector
+      ↓
+Freeze Existing Item Factors
+      ↓
+User-only BPR Fine-Tuning
+      ↓
+4-Retriever Candidate Generation
+      ↓
+Full15
+      ↓
+E_HR XGBoost
+      ↓
+Top-10
 ```
 
-Candidate Recall은 증가했지만 최종 Hits는 **269**에 그쳤습니다.
+Fine-Tuning:
 
-### Self-Ranking 문제
+| Parameter | Value |
+|---|---:|
+| Epochs | **3** |
+| Learning Rate | **0.01** |
+| Regularization | **0.001** |
 
-BPR을 Retriever에도 넣은 뒤 동일한 BPR score로 다시 Ranking하면:
+이 방식은 **기존 item representation은 유지하면서 새로운 사용자 vector만 빠르게 적응**시키는 구조입니다.
+
+---
+
+# 🎯 Qualitative Evaluation
+
+신규 사용자는 held-out ground truth가 없기 때문에 Precision / Recall / NDCG를 억지로 계산하지 않고, **실제 추천 결과 + Popularity / Novelty 변화**를 함께 확인했습니다.
+
+## Q1~Q8 Summary
+
+| ID | 시나리오 | Input Log Pop. | Input Novelty | Output Log Pop.@10 | Output Novelty@10 | 핵심 관찰 |
+|---|---|---:|---:|---:|---:|---|
+| Q1 | 현실적 혼합 취향 | 11.1557 | 9.0512 | 11.4322 | 8.6523 | Action / Open World / Story 주 취향이 강하게 반영 |
+| Q2 | 완전히 다른 2장르 | 11.6154 | 8.3880 | 12.0015 | 7.8310 | Shooter가 Cozy보다 강하게 반영 |
+| Q3 | 완전히 다른 3장르 | 11.7046 | 8.2593 | 11.8263 | 8.0837 | Shooter / Strategy는 보존, Cozy는 약함 |
+| Q4 | 3장르 강화 2+2+2 | 11.3063 | 8.8339 | 11.7858 | 8.1421 | 각 취향 signal을 강화하자 Strategy가 더 선명 |
+| Q5 | Popular Only | 12.3299 | 7.3571 | 11.7232 | 8.2325 | 입력보다 약간 덜 인기 있고 더 Novel |
+| Q6 | Low-interaction / Long-tail | 3.1355 | 20.6860 | 4.1095 | 19.2614 | niche signal이 명확하면 Long-tail 유지 가능 |
+| Q7 | Popular 3 + Long-tail 3 | 7.7899 | 13.9390 | 11.8511 | 8.0479 | Popular signal이 Long-tail을 크게 압도 |
+| Q8 | Theme partially controlled | 7.9331 | 13.7245 | 11.6286 | 8.3689 | 장르뿐 아니라 popularity 자체의 영향도 큼 |
+
+### Q1 — 실제 취향에 가까운 사례
+
+Q1 추천 Top-10에는:
 
 ```text
-BPR Retriever
-    ↓
-이미 BPR 고득점 후보 확보
-    ↓
-BPR Ranker
-    ↓
-Pure BPR Top-10과 사실상 동일
+God of War
+Marvel's Spider-Man Remastered
+Grand Theft Auto V Legacy
+Cyberpunk 2077
 ```
 
-즉 **같은 모델을 Retriever와 Ranker에 동시에 쓰면 두 단계가 중복될 수 있음**을 확인했습니다.
+처럼 실제로 이미 플레이한 게임 4개가 포함됐습니다.
 
----
+단일 사용자 사례이므로 전체 정확도로 일반화할 수는 없지만, **주된 Action / Open World / Story 취향은 자연스럽게 포착**했습니다.
 
-## 3. Cross-Ranker Experiment
+### Q6 — Long-tail Signal
 
-이 문제를 해결하기 위해 **Ranker는 Candidate Retrieval에 참여하지 않는 구조**를 비교했습니다.
-
-| Retriever | Ranker | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---|---|---:|---:|---:|---:|---:|
-| **BPR59 + Content41** | **Item-Based** | **0.0827** | **0.1061** | **0.5225** | **0.1168** | **330** |
-| Item71 + BPR29 | Content-Based | 0.0600 | 0.0799 | 0.4275 | 0.0841 | 240 |
-| Item78 + Content22 | BPR | 0.0705 | 0.0880 | 0.4750 | 0.0963 | 282 |
-
-Candidate Recall이 가장 높은 구조가 최종 Top-10도 가장 좋은 것은 아니었습니다.
-
-이 실험을 통해 **Item-Based를 최종 Ranker로 확정**했습니다.
-
----
-
-## 4. Retriever Ratio Sweep
-
-Item-Based Ranker를 고정하고 BPR / Content / User-Based 후보 비율을 비교했습니다.
-
-| 후보 구성 | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---|---:|---:|---:|---:|---:|
-| BPR59 + Content41 | 0.0827 | 0.1061 | 0.5225 | 0.1168 | 330 |
-| BPR70 + Content30 | 0.0801 | 0.1028 | 0.5025 | 0.1143 | 320 |
-| BPR50 + Content50 | 0.0819 | 0.1052 | 0.5175 | 0.1168 | 326 |
-| BPR40 + Content60 | 0.0809 | 0.1032 | 0.5050 | 0.1135 | 322 |
-| **BPR56 + Content39 + User5** | **0.0872** | **0.1110** | **0.5400** | **0.1216** | **348** |
-| BPR67 + Content28 + User5 | 0.0849 | 0.1079 | 0.5275 | 0.1196 | 339 |
-| BPR48 + Content47 + User5 | 0.0850 | 0.1094 | 0.5250 | 0.1199 | 339 |
-
-User-Based는 독립 성능은 상대적으로 낮지만, 약 **5%의 weak auxiliary retriever**로 사용할 때 BPR/Content가 놓친 후보를 보완했습니다.
-
----
-
-## 5. Candidate Size Sweep
-
-Retriever 비율 **56 : 39 : 5**를 고정한 뒤 Candidate Size를 비교했습니다.
-
-| Size | Candidate Recall | Scoreable Recall | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 50 | 0.1710 | 0.1449 | 0.0780 | 0.0976 | 0.4875 | 0.1104 | 308 |
-| **100** | 0.2488 | 0.2055 | **0.0872** | **0.1110** | **0.5400** | **0.1216** | **348** |
-| 150 | 0.3005 | 0.2413 | 0.0835 | 0.1078 | 0.5300 | 0.1188 | 334 |
-| 200 | **0.3386** | **0.2669** | 0.0840 | 0.1081 | 0.5225 | 0.1197 | 336 |
-
-Candidate Recall은 계속 증가했지만 최종 성능은 100에서 최고였습니다.
-
-이 결과는:
-
-> **현재 Item-Based Ranker가 100개를 초과해 추가된 정답 후보를 Top-10으로 충분히 끌어올리지 못하고 있을 가능성**
-
-을 보여주며, Learning-to-Rank를 검토하게 된 핵심 근거입니다.
-
----
-
-## 6. Weighted Rank Fusion / Ablation
-
-Case 3 초기 가중치:
+Low-interaction 게임만 입력했을 때:
 
 ```text
-Item    0.50
-User    0.15
-BPR     0.20
-Content 0.15
+1. Geneforge 2
+2. Geneforge 5: Overthrow
+3. Geneforge 4: Rebellion
+4. Geneforge 1
 ```
 
-각 모델을 하나씩 제거한 결과:
+처럼 niche series를 상위에 배치했습니다.
 
-| 실험 | P@10 | R@10 | HR@10 | NDCG@10 | Hits |
-|---|---:|---:|---:|---:|---:|
-| Full | 0.0775 | 0.1001 | 0.4675 | 0.1134 | 310 |
-| - Item | 0.0598 | 0.0774 | 0.4200 | 0.0881 | 239 |
-| - User | 0.0793 | 0.1019 | 0.4800 | 0.1125 | 317 |
-| - BPR | 0.0683 | 0.0874 | 0.4275 | 0.1023 | 273 |
-| - Content | 0.0753 | 0.0963 | 0.4575 | 0.1087 | 301 |
+즉 시스템이 무조건 인기작만 추천하는 것은 아니며, **취향 signal이 충분히 명확하면 Long-tail preference도 유지할 수 있음**을 확인했습니다.
 
-기여도는 다음과 같은 경향을 보였습니다.
+### Animal Theme 추가 실험
 
-```text
-Item-Based >> BPR > Content-Based >> User-Based
-```
+`Stray` 단독 입력에서는 `Ori and the Will of the Wisps`, `Cult of the Lamb`처럼 동물/생물 character와 관련된 결과가 일부 있었지만, 전체적으로는 Story / Adventure 계열이 더 강했습니다.
 
-User weight를 0.05로 줄인 뒤 Fusion Hits는 **310 → 320**으로 개선되었습니다.
+`ANIMAL WELL`은 metadata에는 존재했지만 현재 BPR item mapping에는 없어 신규 user vector 생성에 활용할 수 없었습니다.
 
-하지만 동일 조건에서 Retriever→Ranker 구조가 Hits **348**을 기록해 최종 방향은 Weighted Fusion보다 **Multi-Retriever + Single Ranker**로 결정했습니다.
-
----
-
-## 7. Complementarity / Unique Hit
-
-| 모델 | Standalone Hits | Unique Hits |
-|---|---:|---:|
-| Item-Based | 253 | 130 |
-| User-Based | 144 | 70 |
-| BPR | 209 | 124 |
-| Content-Based | 112 | 61 |
-| 4개 모델 모두 공통 | - | 8 |
-
-각 모델이 상당히 다른 정답을 잡고 있어 Hybrid 구성의 근거가 되었습니다.
-
-Case 3 Fusion에서는 Item-Based 대비:
-
-- 새로 얻은 정답: **115**
-- 손실한 정답: **58**
-- 순증가: **+57**
+이 결과는 **세부 테마 signal보다 collaborative / genre / gameplay signal이 더 강하게 작동**하는 동시에, **모델별 item universe 불일치가 Cold-Start 처리의 한계가 될 수 있음**을 보여줬습니다.
 
 ---
 
@@ -530,9 +474,9 @@ Steam Metadata
     ↓
 Genres / Tags / Categories / Developers / Publishers
     ↓
-Combined Text Features
+Combined Features
     ↓
-TF-IDF Vectorization
+TF-IDF
     ↓
 User Profile
     ↓
@@ -541,48 +485,31 @@ Cosine Similarity
 Top-N
 ```
 
-### Qualitative Findings
+현재 Content feature에는 게임 제목 자체를 사용하지 않습니다.
 
-**텍스트에 없는 특성은 포착할 수 없음**
-
-`Party Animals` 입력에서 장르와 인원수는 유사했지만 "동물 캐릭터"라는 시각적 테마는 반영되지 않았습니다.
-
-**장르 혼합 시 쏠림 현상**
-
-카드/덱빌딩 + 슈팅 게임을 함께 입력했을 때 카드/덱빌딩 계열로 추천이 강하게 쏠리는 현상을 확인했습니다.
+따라서 title에 특정 단어가 들어간다는 사실보다 **Tags / Genres / Categories / Developer / Publisher metadata**가 content similarity에 직접 반영됩니다.
 
 ---
 
 ## User-Based CF
 
 ```text
-User History
-    ↓
-User × Item Sparse Matrix (+1 / -1)
-    ↓
-Train App IDs로 Query Vector 생성
-    ↓
+User × Item Sparse Matrix
+        ↓
+Target User Vector
+        ↓
 User ↔ User Cosine Similarity
-    ↓
-자기 자신 제외
-    ↓
-Top-K Neighbor (k=30)
-    ↓
-Σ(similarity × interaction) / Σ|similarity|
-    ↓
-Seen Item 제거 + Positive Score Filtering
-    ↓
+        ↓
+Top-K Neighbor
+        ↓
+Similarity Weighted Score
+        ↓
+Seen Item 제거
+        ↓
 Top-N
 ```
 
-### Sparsity Analysis
-
-| 비교 변수 | Pearson r | p-value |
-|---|---:|---:|
-| n_games ↔ n_recommended | +0.3096 | < 0.0001 |
-| n_games ↔ precision | +0.2504 | < 0.0001 |
-
-interaction이 적을수록 안정적인 neighbor 형성이 어려워지는 방향과 일관된 결과를 확인했습니다.
+User-Based CF는 독립 성능은 Item-Based보다 낮았지만 Hybrid에서는 **보조 Retriever**로 활용할 가치가 있었습니다.
 
 ---
 
@@ -590,142 +517,66 @@ interaction이 적을수록 안정적인 neighbor 형성이 어려워지는 방�
 
 ```text
 User × Item Matrix
-    ↓ transpose
+        ↓ transpose
 Item × User Matrix
-    ↓
-User Train Items = Source Items
-    ↓
-Source Item ↔ All Items Cosine Similarity
-    ↓
-Self-Similarity 제거
-    ↓
-Source Item별 Positive Top-K (k=30)
-    ↓
-Candidate Similarity Sum Aggregation
-    ↓
-Seen Item 제거
-    ↓
+        ↓
+Source Items
+        ↓
+Item ↔ Item Cosine Similarity
+        ↓
+Positive Top-K Neighbor
+        ↓
+Score Aggregation
+        ↓
 Top-N
 ```
 
-| 구분 | User-Based CF | Item-Based CF |
-|---|---|---|
-| Matrix 방향 | User × Item | Item × User |
-| Query | 필요 | 불필요 |
-| Similarity | User ↔ User | Item ↔ Item |
-| Candidate Score | similarity × interaction weighted prediction | 동일 candidate로 들어오는 item similarity 합 |
-
-Hybrid에서는 **Candidate Retriever가 아니라 Final Ranker**로 사용합니다.
+프로젝트 전반에서 가장 강한 signal 중 하나였고, 최종 E_HR에서는 **Top-46 Candidate Retriever**로 사용합니다.
 
 ---
 
-## Funk SVD — Completed
+## Funk-SVD
 
 <details>
-<summary><b>Funk SVD 실험 과정과 실패 원인 보기</b></summary>
+<summary><b>Funk-SVD 실험 요약 보기</b></summary>
 
-### Pipeline
-
-```text
-Global Train/Test Split
-    ↓
-mf_train.parquet 37,113,471
-mf_test.parquet   4,041,323
-    ↓
-Surprise SVD
-n_factors=100
-n_epochs=20
-lr_all=0.005
-reg_all=0.02
-    ↓
-Top-N Recommendation
-    ↓
-400명 Evaluation
-```
-
-초기 결과:
+초기 biased SVD:
 
 ```text
-P@10    0.0003
-R@10    0.0006
-HR@10   0.0025
-NDCG@10 0.0004
+P@10    = 0.0003
+R@10    = 0.0006
+HR@10   = 0.0025
+NDCG@10 = 0.0004
 ```
 
-### 가설 검증
+Bias를 제거했을 때 일부 개선:
 
-1. `positive_only=False` 재평가  
-   → Hits 변화 없음 → 가설 기각
+```text
+P@10    = 0.0037
+R@10    = 0.0030
+HR@10   = 0.0350
+NDCG@10 = 0.0042
+```
 
-2. 추천 게임 Train 통계 분석  
-   → 추천 게임 대부분 True Ratio 0.94~1.00  
-   → item bias가 ranking을 지배하는 패턴 발견
-
-3. `biased=False` Ablation  
-   → HR@10 0.0025 → 0.0350으로 개선
-
-하지만 절대 성능은 여전히 매우 낮았습니다.
-
-### Final Conclusion
-
-**rating prediction objective와 Top-N ranking objective의 불일치**를 근본 원인으로 판단하고 Funk SVD 단계를 종료했습니다.
+현재 데이터의 implicit Top-N ranking 문제에서는 **rating prediction objective와 추천 목적의 불일치**가 컸습니다.
 
 </details>
 
 ---
 
-## BPR — Completed
+## BPR
 
-<details open>
-<summary><b>Final BPR 구조 및 핵심 실험</b></summary>
-
-BPR은 `(u, i, j)` triplet을 사용해 positive item이 negative item보다 높은 score를 갖도록 학습합니다.
-
-\[
-x_{uij}=p_u^T(q_i-q_j)
-\]
-
-\[
-L=-\log\sigma(x_{uij})+\lambda(\|p_u\|^2+\|q_i\|^2+\|q_j\|^2)
-\]
-
-### Training Strategy
+BPR은 positive item이 negative item보다 높은 score를 갖도록 pairwise ranking을 학습합니다.
 
 ```text
-1단계
-True Interaction
-    ↓
-implicit BPR
-True > Unseen
+Stage 1
+True Interaction > Unseen
 
-2단계
-Explicit Negative Fine-Tuning
-True > False
+Stage 2
+True Interaction > Explicit False
 ```
 
-`implicit`은 non-zero interaction을 positive signal처럼 다루기 때문에 `is_recommended=False`를 그대로 넣으면 의미가 왜곡될 수 있었습니다.
-
-따라서:
-
-```text
-True > Unseen
-      ↓
-True > False Fine-Tuning
-```
-
-으로 분리했습니다.
-
-### Parameter Search
-
-| 실험 | 핵심 결과 |
-|---|---|
-| Explicit False 효과 | P@10 0.02525 → 0.03650, Hits 101 → 146 |
-| Regularization | 0.0001~0.020 중 0.005 우수 |
-| Factors | 20/40/80에서 metric별 trade-off |
-| Factors × Reg | 60 / 0.005 우수 |
-| Local Search | **60 / 0.006 최종 선택** |
-
-### Final BPR
+Final BPR:
 
 ```python
 iterations = 15
@@ -733,15 +584,12 @@ factors = 60
 learning_rate = 0.05
 regularization = 0.006
 
-explicit_false = True
 explicit_false_epochs = 1
 explicit_false_learning_rate = 0.01
 explicit_false_regularization = 0.001
-
-positive_only = True
 ```
 
-Final Result:
+Final standalone result:
 
 | Metric | Score |
 |---|---:|
@@ -749,84 +597,61 @@ Final Result:
 | R@10 | 0.06870 |
 | HR@10 | 0.3850 |
 | NDCG@10 | 0.06968 |
-| Hits | 209 |
 
-BPR 단계에서 얻은 핵심 결론:
-
-> **Problem Definition > Data Signal > Hyperparameter**
-
-Hybrid에서는 BPR을 **Candidate Retriever**로 사용합니다.
-
-</details>
+최종 Hybrid에서는 **Top-20 Candidate Retriever**로 사용합니다.
 
 ---
 
-# 🐛 Important Debugging Findings
+# 🐛 Important Debugging & Methodology Findings
 
 <details>
-<summary><b>User-Based CF 데이터 누수</b></summary>
+<summary><b>1. User-Based CF Data Leakage</b></summary>
 
-초기 평가에서 Precision@10이 **0.6254**로 비정상적으로 높게 나왔습니다.
+초기 Precision@10이 비정상적으로 높게 나왔고, 평가 matrix에 Test interaction이 남아 있는 문제를 발견했습니다.
 
-원인:
-
-- 평가용 interaction matrix가 Train/Test 미분리 원본으로 생성됨
-- 평가 대상 사용자의 전체 interaction이 neighbor pool에 남음
-- Test 정답이 예측 score에 직접 유입됨
-
-수정 과정:
+호출 chain과 argument 전달까지 추적해 수정한 뒤:
 
 ```text
-exclude_user_idx 추가
-    ↓
-지표 변화 없음
-    ↓
-호출 chain 추적
-    ↓
-run_evaluation()에서 user_to_idx 전달 누락 발견
-    ↓
-수정
-    ↓
-P@10 = 0.0545
+Precision@10 = 0.0545
 ```
 
-이 경험을 통해 여러 파일로 분리된 파이프라인에서는 내부 구현만 보는 것보다 **호출 chain과 인자 전달을 먼저 검증하는 Outside-In debugging 원칙**을 정리했습니다.
+수준의 정상적인 결과를 확인했습니다.
+
+**교훈:** 여러 파일로 분리된 Pipeline에서는 내부 함수만 보는 것보다 **데이터가 어떤 경로로 전달되는지 Outside-In 방식으로 확인**해야 합니다.
 
 </details>
 
 <details>
-<summary><b>NDCG 순위 정보 소실 버그</b></summary>
+<summary><b>2. NDCG Ranking Order Loss</b></summary>
 
-추천 결과를 바로 `set(result["app_id"])`로 변환하면서 추천 순서가 사라지고 있었습니다.
-
-수정:
+추천 결과를 너무 일찍 `set`으로 변환해 ranking order가 사라지는 문제를 발견했습니다.
 
 ```text
-recommended_list
-→ 순서 유지, NDCG 계산
-
-recommended_ids
-→ set 변환, Precision / Recall 계산
+recommended_list → NDCG
+recommended_set  → Precision / Recall
 ```
 
-수정 후 NDCG@10은 **0.0655**로 확인했습니다.
+으로 역할을 분리했습니다.
 
 </details>
 
 <details>
-<summary><b>Self-Similarity 처리</b></summary>
+<summary><b>3. Candidate 내부 NDCG Artifact</b></summary>
 
-User-Based와 Item-Based에서 self-similarity는 서로 다른 문제를 만듭니다.
+Retriever가 Candidate에 넣은 item만 대상으로 NDCG를 계산하면 Candidate에서 놓친 실제 positive가 충분히 반영되지 않았습니다.
 
-- User-Based: 자기 interaction이 neighbor로 들어오면 **data leakage**
-- Item-Based: `A ↔ A = 1.0`이 항상 Top-K를 차지하는 **trivial similarity**
+이를 **전체 Test Positive 기준 Actual Top-10 평가**로 수정했습니다.
 
-공통적으로 Top-K 이전에 self-similarity를 제거합니다.
+</details>
 
-```python
-similarities = cosine_similarity(...)
-similarities[self_idx] = 0
-```
+<details>
+<summary><b>4. Model Item Universe Mismatch</b></summary>
+
+일부 게임은 metadata에는 존재하지만 BPR item mapping에는 존재하지 않았습니다.
+
+이 때문에 신규 사용자 입력에서 특정 게임을 representation에 사용할 수 없는 문제가 발생했습니다.
+
+향후에는 전처리 단계에서 **모든 모델의 item universe / ID integrity를 먼저 검사**할 필요가 있습니다.
 
 </details>
 
@@ -834,81 +659,121 @@ similarities[self_idx] = 0
 
 # 📐 Evaluation
 
-## Dataset Split
+## Dataset
 
-Model-Based CF와 Hybrid는 저장된 Global Train/Test Split을 사용합니다.
+| 항목 | 값 |
+|---|---:|
+| Total Recommendations | **41,154,794** |
+| Train | **37,113,471** |
+| Test | **4,041,323** |
+| BPR Matrix | **13,781,059 × 37,567** |
+| BPR nnz | **37,113,455** |
+| Filtered evaluation users | **666,781** |
+| LTR Search Users | **1,000** |
+| Final Evaluation Users | **400** |
+
+평가 사용자는 interaction 10~78개 구간에서:
 
 ```text
-Total interactions  : 41,154,794
-Train               : 37,113,471
-Test                :  4,041,323
+10~15개   100명
+16~25개   100명
+26~45개   100명
+46~78개   100명
 ```
 
-평가 대상 사용자:
+으로 구성했습니다.
 
-- interaction 10~78개
-- 총 **666,781명**
-- 사용자별 70% Train / 30% Test
-- 나머지 사용자는 100% Train
+## Final Data Protocol
 
-기존 `train_test_split()` 666,781회 호출 구조를 interaction count별 position을 재사용하도록 바꿔 **최대 69회 수준**으로 줄였고 split 생성 시간은 약 5초까지 최적화했습니다.
+```text
+LTR1000
+    ↓
+Candidate / Feature / XGB Search
+    ↓
+Feature Ablation
+    ↓
+3-Seed Stability
+    ↓
+E_HR Final Selection
+    ↓
+LTR1000 전체로 Final Ranker Training
+    ↓
+Original Final400 One-Time Evaluation
+```
 
-## Hybrid Evaluation Users
+`Final400`은 Candidate Size, Feature, XGB parameter, 최종 모델 선택에 사용하지 않았습니다.
 
-Hybrid Architecture 비교에는 동일한 400명을 고정해 사용합니다.
-
-| Review Group | Users |
-|---|---:|
-| 10–15 | 100 |
-| 16–25 | 100 |
-| 26–45 | 100 |
-| 46–78 | 100 |
-| **Total** | **400** |
+중간에 `Selection200 + Final Test200` 분기를 한 번 시도했지만, 원래 최종 평가용으로 보존한 Final400 일부를 모델 선택에 사용하게 되므로 **공식 최종 방법론에서는 폐기**했습니다.
 
 ## Metrics
 
-- Precision@K
-- Recall@K
-- Hit Rate@K
-- NDCG@K
-- Micro Precision / Recall / F1
+### Accuracy / Ranking
+
+- Precision@10
+- Recall@10
+- Hit Rate@10
+- NDCG@10
+- MAP@10
 - Candidate Recall
-- Scoreable Recall
-- Common / Unique Hit
-- Recovered / Lost Hit
-- Pearson Correlation
-- 그룹별 Breakdown
-- Qualitative Evaluation
-- MAP@K 예정
-- Popularity / Coverage 분석 예정
+- Total Hits
+
+### Recommendation Characteristics
+
+Mean Log Popularity:
+
+```text
+mean(log(1 + interaction_count))
+```
+
+Novelty:
+
+```text
+mean(-log2(interaction_count / total_interactions))
+```
+
+정확도뿐 아니라 **추천이 얼마나 인기 item 중심인지, 상대적으로 얼마나 novel한지**도 함께 봤습니다.
 
 ---
 
 # ⚡ Performance Optimization
 
-대규모 데이터를 반복 실험하기 위해 계산 결과를 적극적으로 캐싱했습니다.
+대규모 데이터에서 반복 실험이 가능하도록 Sparse 연산, Batch, Cache, Checkpoint를 적극적으로 사용했습니다.
 
-| 작업 | 최적화 결과 |
-|---|---|
-| Global Split | 66만 회 split → 최대 69회 |
-| BPR | `implicit` Cython/C + CSR + multicore |
-| Item-Based 400명 평가 | 약 1811~1848초 |
-| Reverse cache 구축 포함 | 234.7초 |
-| Cached Reranking | 약 0.3초 |
-| Case 3 Cached Fusion | 약 3초 |
-| Cross-Ranker 초기 | 약 18.1분 |
-| Ratio Sweep 7종 | 약 1.75분 |
-| Candidate Size Sweep 전체 | 약 7.81초 |
+| 작업 | Before / Problem | Optimization / Result |
+|---|---|---|
+| Global Split | 사용자별 split 반복 | interaction count별 position 재사용 → 약 5초 |
+| Item-CF Reranking | 약 1811~1848초 | neighbor precompute + cache |
+| Reverse Reranking | 매우 느린 item similarity | cache 구축 포함 234.7초 |
+| Cached Reranking | 반복 계산 | 약 **0.3초** |
+| Case 3 Fusion | 반복 retrieval | cached 약 **3초** |
+| Ratio Sweep | 7개 구조 반복 | 약 **1.75분** |
+| Candidate Size Sweep | 다수 size 비교 | 약 **7.81초** |
+| 4-Retriever Feature | 최대 약 90~117초/user | Item batch + User sparse batch |
+| User-CF Batch | full user matrix 반복 | 약 **0.4~0.6초/user** 수준 |
+| Final400 첫 optimized run | Runtime 호출식 평가 병목 | 약 **6.51분** |
+| Final400 cache reuse | 동일 feature 반복 계산 | 약 **0.03분** |
 
-주요 cache:
+Final400 최적화 구조:
 
 ```text
-Item→Item Neighbor Cache
-BPR Candidate Cache
-Case3 Retrieval Cache
-Evaluation Subset Cache
-Content TF-IDF Cache
+Fixed Final400
+      ↓
+Train History Preload
+      ↓
+Item-CF Unique Source Batch Precompute
+      ↓
+User-CF Sparse Batch
+      ↓
+BPR / Content User-level Scoring
+      ↓
+Candidate Feature Cache
+      ↓
+XGBoost Batch Prediction
+      ↓
+Final Metrics
 ```
+
+> 최종적으로 **XGBoost 예측 자체보다 Retriever / Feature Generation이 실제 계산 병목**이라는 것을 확인했습니다.
 
 ---
 
@@ -917,13 +782,11 @@ Content TF-IDF Cache
 ```text
 Game Name
     ↓
-동명이인 시 후보 선택
+Resolve Candidate
     ↓
-AppID
+Steam AppID
     ↓
-game_to_idx
-    ↓
-Internal Matrix Index
+Internal Mapping / Matrix Index
     ↓
 Recommendation
     ↓
@@ -932,7 +795,7 @@ AppID
 Game Name
 ```
 
-Game Name은 중복될 수 있지만 **AppID는 고유**하므로 내부 추천 로직은 AppID 기준으로 통일했습니다.
+게임 이름은 중복될 수 있기 때문에 내부 로직은 가능한 한 **Steam AppID 기준**으로 처리합니다.
 
 ---
 
@@ -945,57 +808,60 @@ Game Name은 중복될 수 있지만 **AppID는 고유**하므로 내부 추천 
 | Sparse Matrix | SciPy CSR / LIL |
 | ML | Scikit-learn |
 | Matrix Factorization | Surprise |
-| Pairwise Ranking | implicit BPR |
-| Learning-to-Rank | XGBoost Ranker / LambdaMART (`rank:ndcg`) |
+| Pairwise Ranking | `implicit` BPR |
+| Learning-to-Rank | XGBoost Ranker / LambdaMART |
+| Hyperparameter Search | Optuna |
 | Content | TF-IDF, Cosine Similarity |
+| Evaluation | Precision / Recall / HR / NDCG / MAP / Popularity / Novelty |
 | Visualization | Matplotlib |
-| Deployment | FastAPI / Streamlit (planned) |
-| Learning-to-Rank | XGBoost Ranker / LambdaMART (`rank:ndcg`, experiment in progress) |
+| Storage | CSV / Parquet / NPZ / JSON |
+| Future Deployment | Database + API + Web / Cloud |
 
-### Implemented Algorithms
+### Implemented / Explored
 
 - TF-IDF Content-Based Recommendation
 - User-Based CF
 - Item-Based CF
-- Funk SVD
+- Funk-SVD
 - Bayesian Personalized Ranking
 - Explicit Negative Fine-Tuning
 - Reranking
 - Multi-Retriever Architecture
 - Weighted Rank Fusion
 - Cross-Ranker
+- XGBoost LambdaMART
 - Candidate Size / Retriever Ratio Sweep
-- Hybrid Candidate Diagnostics
+- Optuna Joint Search
+- Feature Ablation
+- Multi-Seed Stability
+- Cold-Start User Vector Adaptation
+- Popularity / Novelty Evaluation
+- Batch / Cache Runtime Optimization
 
 ---
 
 # 📂 Project Structure
 
+현재 Git의 기본 구조를 유지하면서, 최종 정리 후에는 아래처럼 **Runtime / Evaluation / Experiment / Docs 역할을 구분**하는 형태를 목표로 합니다.
+
 ```text
-Game-Recommendation-System/
+GAME-RECOMMENDATION-SYSTEM/
 │
-├── data/                              # Git 제외
-│   ├── raw/
-│   ├── cache/                         # Parquet cache
-│   └── split/
-│       ├── mf_train.parquet
-│       └── mf_test.parquet
+├── main.py
+│   └── Final E_HR Runtime Recommendation
 │
-├── docs/
-│   ├── Day01.md
-│   ├── ...
-│   ├── Day23.md
-│   ├── Day24.md
-│   └── Day25.md
+├── main_final_e_hr_with_quantitative.py
+│   └── Fixed Final400 Quantitative Evaluation
 │
-├── hybrid_arctech_experiment/
-│   ├── baseline_item.py               # Hybrid Item-Based baseline
-│   ├── exp_a_reranking.py             # Case 1 / Reverse
-│   ├── exp_b_multi_retriever.py       # Case 2 / Cross-Ranker
-│   ├── exp_c_fusion.py                # Case 3 / Ablation / Weight Sweep
-│   ├── exp_d_ltr_dataset.py           # LTR Feature Dataset
-│   ├── exp_d_ltr_train.py             # XGBoost Ranker Training
-│   └── exp_d_ltr_evaluation.py        # Item Ranker vs LTR Evaluation
+├── main_final_e_hr_with_qualitative.py
+│   └── New-user Qualitative Evaluation
+│
+├── preprocessing.py
+├── data_split.py
+├── evaluation.py
+├── requirements.txt
+├── Readme.md
+├── .gitignore
 │
 ├── models/
 │   ├── content_base.py
@@ -1003,78 +869,126 @@ Game-Recommendation-System/
 │   ├── itembase.py
 │   ├── Funk_SVD.py
 │   ├── bpr.py
-│   ├── hybrid.py                      # 최종 Hybrid 구현용
+│   ├── hybrid.py
 │   │
 │   ├── run_model/
-│   │   ├── runsvd.py
-│   │   └── run_bpr.py
+│   │   ├── run_bpr.py
+│   │   └── runsvd.py
 │   │
-│   └── saved_model/                   # Git 제외
+│   └── saved_model/                 # Git 제외
 │       ├── bpr_grid/
-│       ├── hybrid_cache/
+│       ├── ltr_cache/
+│       ├── runtime_cache/
 │       ├── case3_cache/
-│       └── results/
-│           ├── hybrid_sampled_users.csv
-│           ├── item_top200_candidates.csv
-│           └── Architecture별 평가 CSV
+│       ├── results/
+│       ├── xgb_ranker_final_e_hr.json
+│       └── xgb_ranker_final_e_hr_metadata.json
+│
+├── hybrid_arctech_experiment/
+│   ├── baseline_item.py
+│   ├── exp_a_reranking_*.py
+│   ├── exp_b_multi_retriever.py
+│   ├── exp_b_ranker_comparison.py
+│   ├── exp_b_candidate_size_sweep.py
+│   ├── exp_b_item_ranker_ratio_sweep.py
+│   ├── exp_b_retriever_ratio_finetune.py
+│   ├── exp_b_bpr_grid_search.py
+│   ├── exp_c_fusion.py
+│   ├── exp_c_fusion_ablation.py
+│   ├── exp_c_user_weight_sweep.py
+│   ├── exp_d_xgb_ranker_exp1.py
+│   └── ...                          # LTR / Optuna / Ablation / Stability experiments
+│
+├── docs/
+│   ├── Day01.md
+│   ├── ...
+│   ├── Day25.md
+│   ├── Day26.md
+│   ├── Day27.md
+│   └── Experiment_Summary.md
 │
 ├── notebook/
-├── preprocessing.py
-├── data_split.py
-├── evaluation.py
-├── main.py
-├── Readme.md
-├── requirements.txt
-└── .gitignore
+│
+└── data/                            # Git 제외
+    ├── raw/
+    ├── cache/
+    └── split/
+        ├── mf_train.parquet
+        └── mf_test.parquet
 ```
 
-`models/saved_model/`의 대형 모델과 cache는 Git에서 제외하고 로컬에서 재사용합니다.
-
-`models/hybrid.py`는 Architecture 확정 후 최종 추천 구조를 정식 구현하기 위한 파일입니다.
+> 현재 Git에는 Day01~Day25와 기존 experiment scripts가 먼저 올라가 있으며, 최종 commit에서 Day26 / Day27 / Experiment Summary / Final Runtime·Evaluation 파일을 함께 반영하는 구조를 기준으로 문서화했습니다.
 
 ---
 
-# 🚧 Known Issues / To-Do
+# 🚧 Known Limitations
 
-- **Name = NaN metadata mismatch**
-  - Item-Based CF 정성평가 중 일부 게임 이름이 NaN으로 조회됨
-  - 원인 분석 보류
+## 1. Popularity / Novelty Imbalance
 
-- **Party Animals 입력 시 빈 DataFrame**
-  - 정성평가 대상에서 제외
-  - 원인 분석 보류
+Long-tail 취향만 주어졌을 때는 niche recommendation이 가능했지만, Popular + Long-tail 취향이 함께 들어오면 인기 signal이 Top-10을 크게 지배했습니다.
 
-- **하위 폴더 직접 실행 시 import path**
-  - `ModuleNotFoundError: No module named 'data_split'`
-  - Project Root import 구조로 해결 방향 정리
+다음 프로젝트에서는:
 
-- **User-Based Candidate Coverage**
-  - Hybrid 실험에서 최대 400명 중 362명만 후보 생성
-  - 평균 후보 약 14.6개
-  - Sparsity 영향 지속
+```text
+Relevance
++ Novelty
++ Diversity
++ Popularity Bias Control
+```
 
-- **Retriever + 동일 Ranker 중복**
-  - BPR Retriever + BPR Ranker에서 확인
-  - Cross-Ranker 구조로 해결
+을 함께 고려하는 **Multi-Objective Ranking / Reranking**을 다뤄보고 싶습니다.
 
-- **Candidate Size > 100**
-  - Candidate Recall은 증가하지만 최종 성능 하락
-  - Item-Based Ranker 한계 가능성
-  - Learning-to-Rank로 개선 여부 검토
+## 2. Item Universe / Data Integrity
 
-- **실험 저장 경로 통일**
-  - `models/saved_model/`
-  - `results/`
-  - `case3_cache/`
-  - `hybrid_cache/`
-  - 최종 리팩토링에서 Config Source 단일화 예정
+일부 item은 metadata에는 존재하지만 특정 model mapping에는 없었습니다.
 
-- **XGBoost Environment**
-  - `.venv`에 `xgboost` 설치 필요
-  - LTR 실험 전 `requirements.txt` 최종 동기화 예정
+다음에는 모델 개발 전에:
 
-- **Dependency 동기화**
-  - `implicit`, Surprise, PyArrow 등과 `requirements.txt` 최종 동기화 필요
+```text
+Raw Data
+→ ID / Type 정리
+→ Duplicate / Missing 검사
+→ Model별 Item Universe 비교
+→ Train / Validation / Test 고정
+→ Data Integrity Test
+```
+
+를 먼저 끝내는 방향으로 개선할 계획입니다.
+
+## 3. Multi-Interest Competition
+
+여러 취향이 동시에 들어오면 강한 취향이나 인기 signal이 약한 취향을 덮을 수 있습니다.
+
+현재 Ranker는 Diversity 자체를 최적화하는 모델이 아니므로, 향후에는 multi-interest representation / diversification도 추가 실험 대상입니다.
+
+## 4. Experiment File Organization
+
+프로젝트가 길어지면서 experiment script가 많아지고 이름도 복잡해졌습니다.
+
+다음 프로젝트에서는 시작부터:
+
+```text
+experiments/
+    01_baseline/
+    02_candidate_search/
+    03_ranker_search/
+    04_feature_ablation/
+    05_stability/
+    06_final_evaluation/
+
+configs/
+results/
+artifacts/
+src/
+```
+
+처럼 실험 목적과 결과 저장 구조를 분리할 계획입니다.
+
+## 5. Local / Offline 중심
+
+현재 프로젝트는 Python / DataFrame / Local Cache 중심입니다.
+
+다음에는 **Database + SQL + API + Web + Cloud Deployment**까지 포함한 실제 서비스 형태를 목표로 합니다.
 
 ---
 
@@ -1083,175 +997,83 @@ Game-Recommendation-System/
 ## ✅ Completed
 
 - [x] Steam metadata preprocessing / Parquet caching
-- [x] User-based / Global Train-Test Split
+- [x] Global Train/Test Split
 - [x] Content-Based Recommendation
 - [x] User-Based CF
 - [x] Item-Based CF
-- [x] Precision / Recall / HR / NDCG + Macro / Micro evaluator
-- [x] User-Based data leakage diagnosis and fix
-- [x] NDCG implementation bug fix
-- [x] Funk SVD implementation / evaluation / ablation / 종료
-- [x] BPR 직접 구현
-- [x] `implicit` 기반 37M full training
+- [x] Funk-SVD implementation / diagnosis
+- [x] Implicit BPR full training
 - [x] Explicit False Fine-Tuning
-- [x] BPR 27-case Grid Search
-- [x] **Final BPR = factors 60 / reg 0.006 / iter 15**
-- [x] Hybrid common evaluation environment
-- [x] Item-Based Hybrid Baseline
-- [x] Case 1 / Case 1 Reverse
-- [x] Case 2
-- [x] Case 3 Weighted Rank Fusion
-- [x] Case 3 Ablation
-- [x] User-Based Weight Sweep
-- [x] Self-Ranking 문제 발견
+- [x] BPR parameter search
+- [x] Hybrid Reranking
+- [x] Multi-Retriever
+- [x] Weighted Rank Fusion / Ablation
 - [x] Cross-Ranker
-- [x] Item-Based Ranker 확정
-- [x] Retriever Ratio Sweep
-- [x] **Retriever Ratio Fine-Tuning → 56 / 39 / 5 유지**
-- [x] Candidate Size Sweep → **100 최적**
-- [x] Hybrid Architecture 반확정
-- [x] Retrieval / Neighbor caching optimization
-- [x] LTR 개념 / Feature / Dataset 구조 설계
-- [x] LTR Exp1 / Exp2 / Exp3 계획 수립
-- [x] 신규 사용자 BPR 처리 방식 설계
-- [x] Final evaluation metric 확장 계획 수립
+- [x] Candidate Size / Retriever Ratio Search
+- [x] XGBoost Learning-to-Rank
+- [x] 4-Retriever Feature Generation Optimization
+- [x] Actual Top-10 Evaluation redesign
+- [x] Constrained Optuna
+- [x] Candidate Upper-Bound Sweep
+- [x] Final Joint Optuna
+- [x] Feature Ablation
+- [x] 3-Seed Stability
+- [x] **Final E_HR Selection**
+- [x] **LTR1000 Final Training**
+- [x] **Final400 One-Time Evaluation**
+- [x] MAP / Popularity / Novelty
+- [x] New User BPR Adaptation
+- [x] Qualitative Evaluation
+- [x] Final400 Batch / Cache Optimization
 
-## 🚧 In Progress — Learning-to-Rank
+## 🔜 Future Work
 
-### Exp1 — 8 Features
-
-- [ ] 4 normalized model scores
-- [ ] 4 model ranks
-- [ ] XGBRanker (`rank:ndcg`) 학습
-- [ ] Item-Based Ranker와 동일 Candidate Set에서 비교
-
-### Exp2 — 10 Features
-
-- [ ] `source_count`
-- [ ] `user_interaction_count`
-
-### Exp3 — 12 Features
-
-- [ ] `game_popularity`
-- [ ] `game_positive_ratio`
-
-### Optional
-
-- [ ] genre / tag / developer / publisher similarity
-- [ ] 필요 최소 XGBoost parameter tuning
-- [ ] Final LTR Feature Set 결정
-
-## ⏳ Final System Integration
-
-- [ ] Item-Based vs Final XGBoost Ranker 최종 비교
-- [ ] 최종 Architecture 확정
-- [ ] Final Ranker 저장
-- [ ] `models/hybrid.py`에 최종 recommender class 통합
-- [ ] `main.py` 실제 사용자 입력 흐름 연결
-
-### New User BPR Adaptation
-
-```text
-Played Games
-    ↓
-BPR Item Embedding lookup
-    ↓
-Item Embedding Mean
-    ↓
-Initial User Vector
-    ↓
-Freeze existing Item Factors
-    ↓
-User-only BPR Fine-Tuning
-    ↓
-New User BPR Scores
-```
-
-- [ ] 신규 User Factor 구현
-- [ ] BPR56 + Content39 + User5 Candidate Retrieval 연결
-- [ ] Final Ranker 연결
-- [ ] Top-10 Game Name / Score 출력
-- [ ] End-to-End 실제 사용 테스트
-
-## ⏳ Final Evaluation
-
-### Accuracy / Ranking Quality
-
-- [ ] Precision@10
-- [ ] Recall@10
-- [ ] Hit Rate@10
-- [ ] NDCG@10
-- [ ] **MAP@10**
-
-### Recommendation Characteristics
-
-- [ ] **Mean Log Popularity@10**
-- [ ] **Novelty@10**
-- [ ] Popularity Bias 분석
-- [ ] Coverage
-- [ ] Sparsity Group별 성능
-- [ ] Personalization / Explainability
-- [ ] 실행시간 비교
-- [ ] Candidate / Ranking 역할 분석
-- [ ] 모델별 기여 분석
-
-## ⏳ Project Close
-
-- [ ] Final quantitative / qualitative evaluation
-- [ ] 시스템 한계 분석
-- [ ] README / Docs 최신화
-- [ ] Day 회고 정리
-- [ ] 프로젝트 공식 종료
-- [ ] FastAPI / Streamlit Deployment (선택)
+- [ ] Popularity / Novelty Multi-Objective Ranking
+- [ ] More rigorous item-universe preprocessing
+- [ ] Experiment Config / Result directory refactoring
+- [ ] Pre-designed Grid + Optuna search protocol
+- [ ] SQL / Database-based interaction pipeline
+- [ ] API / Web UI
+- [ ] Cloud deployment
+- [ ] Large-scale retrieval model such as Two-Tower exploration
 
 ---
 
-# 📌 Current Status
+# 📌 Final Status
 
 ```text
 Version
-V3.5 — Day25
+Final — Day27
 
-Stage
-Hybrid Fine-Tuning Complete
-→ Learning-to-Rank Experiment
-→ Final System Integration
-
-Current Candidate Retrieval
-BPR 56
-+ Content 39
-+ User-Based 5
+Final Candidate Retrieval
+Item-CF 46
+BPR 20
+Content 15
+User-CF 20
         ↓
-Candidate ≈ 100
+Candidate ≤ 101
 
-Current Baseline Ranker
-Item-Based
+Final Feature
+Full15
 
-Current Best Hybrid Result
-P@10    0.08722
-R@10    0.11102
-HR@10   0.5400
-NDCG@10 0.12155
-Hits    348
+Final Ranker
+XGBoost LambdaMART
+n_estimators = 54
 
-Final BPR
-factors = 60
-reg     = 0.006
-iter    = 15
+Final400
+P@10      = 0.096250
+R@10      = 0.127890
+HR@10     = 0.570000
+NDCG@10   = 0.139857
+MAP@10    = 0.069833
+Cand.R    = 0.272015
+Novelty   = 10.354832
+Hits      = 385
 
-LTR Plan
-Exp1: 8 features
-Exp2: 10 features
-Exp3: 12 features
-
-Next
-XGBRanker Exp1
-→ Feature Ablation
-→ Item Ranker vs XGB Ranker
-→ Final Architecture
-→ main.py / recommender integration
-→ MAP / Popularity / Novelty
-→ Final Evaluation
+Project Status
+Model / Architecture Experiments Complete
+→ Documentation
+→ Git Final Cleanup
 → Project Close
 ```
 
@@ -1259,30 +1081,48 @@ XGBRanker Exp1
 
 ## Final Project Direction
 
-프로젝트의 남은 목표는 **새로운 Retriever나 새로운 Hybrid 구조를 계속 추가하는 것**이 아닙니다.
+이 프로젝트는 **단일 추천 알고리즘의 성능 비교**에서 시작했지만, 최종적으로는 다음 문제를 함께 다루는 프로젝트가 되었습니다.
 
 ```text
-1. 현재 Candidate 구조 고정
-2. Learning-to-Rank로 Ranking 개선 가능성 검증
-3. 최종 Ranker 결정
-4. 실제 사용자 입력이 가능한 recommender로 통합
-5. 정확도 + Popularity / Novelty까지 최종 평가
-6. 문서화 후 프로젝트 종료
+Data Preprocessing
+        ↓
+Standalone Recommenders
+        ↓
+Candidate Retrieval
+        ↓
+Learning-to-Rank
+        ↓
+Evaluation Design
+        ↓
+Hyperparameter / Architecture Search
+        ↓
+Feature Ablation
+        ↓
+Stability Validation
+        ↓
+Cold-Start
+        ↓
+Popularity / Novelty
+        ↓
+Runtime Optimization
 ```
 
-최종적으로는:
+최종 시스템은 사용자가 플레이한 Steam 게임을 입력하면:
 
 ```text
-사용자가 플레이한 Steam 게임 입력
-        ↓
-신규 사용자 Feature / BPR User Factor 생성
-        ↓
-BPR56 + Content39 + User5 Candidate Retrieval
-        ↓
-Final Ranker
-(Item-Based 또는 XGBoost Ranker)
-        ↓
+Played Games
+      ↓
+New User Representation
+      ↓
+4-Retriever Candidate Generation
+      ↓
+Full15 Feature Engineering
+      ↓
+E_HR XGBoost Ranker
+      ↓
 Top-10 Steam Game Recommendation
 ```
 
-형태의 실제 사용 가능한 추천 파이프라인을 목표로 합니다.
+형태로 동작합니다.
+
+프로젝트에서 가장 크게 얻은 것은 특정 모델 하나의 구현보다, **추천시스템에서 데이터·Retrieval·Ranking·Evaluation·Experiment Design·Runtime Engineering이 서로 연결되어 있다는 경험**입니다.

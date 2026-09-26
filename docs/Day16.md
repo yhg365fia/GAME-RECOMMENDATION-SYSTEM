@@ -25,7 +25,7 @@ Model-based CF 단계로 넘어가기 위해 **Matrix Factorization(MF) 개념�
 | 적합도 계산 | 존재하는 벡터 간 cosine similarity | 학습된 latent vector의 dot product |
 | 학습 단위 | 사용자/아이템 개별 비교 | 전체 데이터를 이용한 global 학습 |
 
-$$ R \approx PQ^T, \quad \hat r_{ui}=p_u^Tq_i $$
+`R ≈ PQᵀ, r̂_ui = p_uᵀq_i`
 
 **Latent vector**($p_u, q_i$)는 RPG 선호도처럼 사람이 정의한 feature가 아니라, interaction을 잘 설명하도록 모델이 스스로 생성한 representation이다. 이 때문에 MF는 Item-based CF보다 추천 이유를 설명하기 어렵다.
 
