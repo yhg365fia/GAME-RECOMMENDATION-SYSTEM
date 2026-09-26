@@ -19,7 +19,7 @@ Micro 지표를 추가하려고 `evaluate_user()` 코드를 다시 열어보다�
 Day11에서 확인한 `n_recommended` 평균 7.28/10, Top-10 완전 채움 비율 54.4%라는 수치를 다시 보면서, "추천 후보를 1~2개만 생성한 유저와 10개를 다 채운 유저가 Macro 평균에서 동일한 가중치를 갖는 게 맞나"라는 의문을 제기함.
 
 **3) Micro Precision/Recall/F1 설계**
-`evaluate_user()`가 이미 반환하던 `hits`, `n_recommended`, `n_test`를 활용해, 개별 유저 평가 함수에 전체 통계를 섞지 않고 `eval_df`에서 raw count를 합산하는 방식으로 Micro Precision(`ΣHits/Σn_recommended`), Micro Recall(`ΣHits/Σn_test`)을 계산. Precision과 Recall의 균형을 하나의 값으로 보기 위해 Micro F1도 추가.
+`evaluate_user()`가 이미 반환하던 `hits`, `n_recommended`, `n_test`를 활용해, 개별 유저 평가 함수에 전체 통계를 섞지 않고 `eval_df`에서 raw count를 합산하는 방식으로 Micro Precision(`ΣHits/Σn_recommended`), Micro Recall(`ΣHits/Σn_test`)을 계산. 다만 당시에는 사용자별 추천 개수가 10으로 고정되지 않았으므로 이 Micro Precision은 엄밀한 fixed-K Micro `Precision@10`이라기보다 **반환된 전체 추천 대비 적중 비율**에 가깝다. Precision과 Recall의 균형을 하나의 값으로 보기 위해 Micro F1도 추가.
 
 **4) Hit Rate·NDCG는 Micro로 확장하지 않기로 판단**
 Hit Rate는 애초에 "유저 단위 성공 여부"의 평균이라 별도 Micro 버전이 의미가 크지 않다고 판단. NDCG는 유저별 DCG/IDCG로 이미 정규화된 값이라, 전체 유저의 DCG·IDCG를 그냥 합치면 test item이 많은 유저에게 가중치가 쏠리는 문제가 생겨 기존처럼 유저별 평균을 유지하기로 결정.
@@ -35,6 +35,8 @@ review_group별 평균 비교(Day11)만으로는 "패턴이 있어 보인다" �
 
 **7) Self-Similarity 개념 재정리**
 Item-Based CF로 넘어가기 전, "자기 자신과의 유사도를 애초에 계산하면 안 되는 것 아닌가"라는 의문에서 출발해, User-Based와 Item-Based 각각에서 self-similarity가 왜/어떻게 문제가 되는지 구조적으로 정리함 (5번 항목 참고).
+
+> **후기 정정 — 평가 프로토콜:** Day11~12의 User-Based 분석은 자기 자신 neighbor 누수를 제거한 뒤 진행했지만, 최종 프로젝트에서 평가 기준을 통일하면서 `interaction_matrix`도 **Train-only**로 구성하는 것이 더 엄밀하다는 점을 확인했다. 이 시기의 수치는 학습 과정 기록으로 유지하고, 최종 모델 비교에는 이후 통일된 평가 결과를 사용한다.
 
 ## 3. 최종 평가 결과
 

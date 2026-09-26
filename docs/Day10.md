@@ -36,6 +36,8 @@ Content-based(Precision 0.0268)와 비교해 비정상적으로 높은 수치가
 - `NameError: name 'exclude_user_idx' is not defined` 발생 — 함수 본문에서 그 이름을 쓰면서 정작 함수 시그니처(정의부)에는 파라미터로 추가하지 않아서 발생. 파라미터 추가로 해결
 - `user_to_idx=None`을 기본값으로 둬서, content-based recommender로 되돌아갈 때는 이 값을 넘기지 않아도 기존 방식대로 동작하도록 호환성 유지
 
+> **후기 정정 — 평가 프로토콜:** 당시 수정은 평가 대상 사용자의 자기 자신 row가 neighbor로 들어오며 Test 정보가 직접 새는 문제를 해결한 것이다. 다만 이후 프로젝트에서 공통 Train/Test split을 기준으로 평가를 엄밀하게 통일하려면, 비교 대상 `interaction_matrix` 자체도 **Train 데이터만으로 구성**해야 한다는 점을 확인했다. 자기 자신 제외만으로는 전체 행렬에 포함된 Test interaction의 영향을 완전히 제거했다고 볼 수 없다.
+
 ## 오늘 배운 핵심 개념
 
 - **인터페이스 통일의 힘과 위험**: `recommend(app_id_list, top_n)`이라는 동일한 인터페이스를 따르면 recommender 종류(content-based/user-based)에 상관없이 평가 로직 전체를 재사용할 수 있음. 그러나 인터페이스를 맞추기 위해 리팩토링하는 과정에서 원래 있던 로직(자기 자신 제외)이 조용히 누락될 수 있다는 것도 함께 확인함

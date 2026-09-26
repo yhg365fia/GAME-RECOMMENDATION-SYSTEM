@@ -50,14 +50,14 @@
 
 ### Hybrid 전략의 종류와 선택 기준
 
-Content-based가 실제로 Hybrid에 널리 쓰이는 이유는, <cite index="6-1">협업 필터링은 평점이 있어야만 추천 가능한 반면 content-based는 아이템의 특징을 이용하기 때문에 한 번도 평가되지 않은 아이템도 추천할 수 있기 때문</cite>. 이미지가 있으면 CNN 임베딩을, 텍스트/리뷰가 있으면 LLM 임베딩을 content feature로 쓰는 방향도 실무에서 통용됨.
+Content-based가 실제로 Hybrid에 널리 쓰이는 이유는, 협업 필터링은 평점이 있어야만 추천 가능한 반면 content-based는 아이템의 특징을 이용하기 때문에 한 번도 평가되지 않은 아이템도 추천할 수 있기 때문. 이미지가 있으면 CNN 임베딩을, 텍스트/리뷰가 있으면 LLM 임베딩을 content feature로 쓰는 방향도 실무에서 통용됨.
 
 Hybrid는 "가중치로 섞기"와 "따로 뽑기"가 둘 다 존재하며, 상황에 따라 다른 방식을 씀:
 
-- **Weighted**: <cite index="4-1">협업 필터링과 content-based의 출력을 가중 평균으로 결합, 성능에 따라 비중 조절</cite> — 지금 프로젝트에서 채택한 방식
-- **Switching**: <cite index="4-1">유저 행동이나 아이템 특성 등 기준에 따라 두 방식 사이를 전환</cite> (예: 신규 유저는 content-based, 상호작용이 쌓이면 협업 필터링으로 전환) — "인기 게임=item-based, 신작/비인기 게임=content-based"로 전환하는 것도 이 방식에 해당
-- **Cascade**: <cite index="4-1">한 방식을 먼저 적용하고 그 결과를 다른 방식으로 다듬는 방식</cite> — 상위 추천기가 구분 못한 동점을 하위 추천기가 정리
-- **Mixed**: <cite index="4-1">두 모델의 추천을 각각 보여주고 유저가 직접 고르게 함</cite>
+- **Weighted**: 협업 필터링과 content-based의 출력을 가중 평균으로 결합, 성능에 따라 비중 조절 — 지금 프로젝트에서 채택한 방식
+- **Switching**: 유저 행동이나 아이템 특성 등 기준에 따라 두 방식 사이를 전환 (예: 신규 유저는 content-based, 상호작용이 쌓이면 협업 필터링으로 전환) — "인기 게임=item-based, 신작/비인기 게임=content-based"로 전환하는 것도 이 방식에 해당
+- **Cascade**: 한 방식을 먼저 적용하고 그 결과를 다른 방식으로 다듬는 방식 — 상위 추천기가 구분 못한 동점을 하위 추천기가 정리
+- **Mixed**: 두 모델의 추천을 각각 보여주고 유저가 직접 고르게 함
 
 즉 "정확도를 서로 보완하고 싶으면 weighted, 데이터 상태(신규/기존, 인기/비인기)에 따라 완전히 다른 로직이 필요하면 switching, 한쪽이 후보를 좁혀줘야 하면 cascade"로 정리됨.
 
@@ -117,9 +117,10 @@ top_k_idx = np.argpartition(row_data, -k)[-k:]
 
 ### 6. 예측 평점 계산
 ```python
+sim_sum = np.abs(neighbor_sims).sum()
 predicted = weighted_sum / sim_sum if sim_sum > 0 else weighted_sum
 ```
-- 정상적인 경우: 예측점수 = (유사도 × 평점)의 합 / 유사도의 합
+- 정상적인 경우: 예측점수 = (유사도 × 평점)의 합 / 유사도 절댓값의 합
 - `sim_sum == 0`이면 0으로 나눌 수 없으므로 예외처리
 
 ### 7. 이미 플레이한 게임 제거

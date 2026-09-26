@@ -89,7 +89,7 @@ BPR(Bayesian Personalized Ranking)의 핵심 목적은 **Positive item이 Negati
 
 점수 차이는 실수이므로 0~1 값으로 변환하기 위해 **sigmoid** $\sigma(x)=\frac{1}{1+e^{-x}}$를 사용해 $\sigma(x_{uij})$를 구한다. 예를 들어 $x_{uij}=5$면 $\sigma(5)\approx0.993$으로 positive가 위에 있을 가능성이 매우 높다는 뜻이다.
 
-**Likelihood**는 확률을 더하는 것이 아니라, 여러 ranking 관계가 동시에 관찰될 확률이므로 **곱**한다 ($\prod\sigma(x_{uij})$) — 이는 처음에 헷갈렸던 부분으로, joint probability는 $P(A,B,C)=P(A)P(B)P(C)$처럼 곱해진다는 것을 다시 이해했다. 확률을 계속 곱하면 값이 너무 작아지므로 log를 취해 $\sum\log\sigma(x_{uij})$를 최대화하는 문제로 바꾸고, 머신러닝은 보통 loss를 최소화하므로 부호를 뒤집어 $-\sum\log\sigma(x_{uij})$를 쓴다.
+**Likelihood**는 여러 pairwise 관측을 함께 설명하는 확률 모델이며, BPR에서는 관측된 preference pair들의 likelihood를 factorize한다고 가정해 $\prod\sigma(x_{uij})$ 형태로 곱한다. 일반적인 joint probability가 항상 $P(A,B,C)=P(A)P(B)P(C)$로 분해되는 것은 아니며, 이런 곱 형태는 독립 또는 조건부 독립과 같은 factorization 가정이 있을 때 성립한다. 확률을 계속 곱하면 값이 너무 작아지므로 log를 취해 $\sum\log\sigma(x_{uij})$를 최대화하는 문제로 바꾸고, 머신러닝은 보통 loss를 최소화하므로 부호를 뒤집어 $-\sum\log\sigma(x_{uij})$를 쓴다.
 
 ### 최종 BPR Loss
 
@@ -197,7 +197,7 @@ $0.693 \rightarrow 0.382$로 명확하게 감소했다. 최종 예시 triplet에
 
 ## 7. 오늘의 회고
 
-오늘의 시행착오는 세 가지였다. **① BPR을 classification으로 단순화**했던 것 — `Funk SVD=Regression, BPR=Classification`으로 이해하려 했으나 `Funk SVD=Pointwise/Rating Prediction, BPR=Pairwise Ranking`으로 수정했다. **② Likelihood의 의미 혼동** — 처음엔 여러 확률을 더하는 것으로 생각했으나 $P(A,B,C)=P(A)P(B)P(C)$처럼 joint probability에서는 곱한다는 점을 이해했다. **③ 첫 BPR 학습이 거의 진행되지 않음** — loss가 0.693에 머무른 것을 코드 실패로 판단하지 않고 parameter를 바꿔 추가 실험했고, 결과적으로 0.693→0.382까지 정상적으로 감소하는 것을 확인했다.
+오늘의 시행착오는 세 가지였다. **① BPR을 classification으로 단순화**했던 것 — `Funk SVD=Regression, BPR=Classification`으로 이해하려 했으나 `Funk SVD=Pointwise/Rating Prediction, BPR=Pairwise Ranking`으로 수정했다. **② Likelihood의 의미 혼동** — 처음에는 여러 확률을 단순히 더하거나, 모든 joint probability가 곧바로 $P(A)P(B)P(C)$로 분해된다고 생각했으나, BPR에서는 pairwise 관측의 likelihood를 factorize한다는 가정 아래 곱 형태를 사용한다는 점으로 수정했다. **③ 첫 BPR 학습이 거의 진행되지 않음** — loss가 0.693에 머무른 것을 코드 실패로 판단하지 않고 parameter를 바꿔 추가 실험했고, 결과적으로 0.693→0.382까지 정상적으로 감소하는 것을 확인했다.
 
 오늘 가장 중요하게 배운 것은 **"좋은 추천 시스템에서 '점수를 잘 맞추는 것'과 '순위를 잘 만드는 것'은 다른 문제일 수 있다"**는 점이다. Funk SVD를 직접 구현하고 실패 원인을 분석했기 때문에, BPR의 의미가 단순한 새 알고리즘 추가가 아니라 **문제 정의와 objective function이 왜 중요한가**라는 관점으로 연결되었다. 또한 BPR에서도 loss 자체만이 아니라 sampling, update 횟수, negative 구성, latent dimension, learning rate, regularization 등 **학습 데이터가 모델에게 어떻게 전달되는지**가 중요하다는 것도 이해했다.
 
