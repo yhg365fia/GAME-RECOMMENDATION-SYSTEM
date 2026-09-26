@@ -988,6 +988,59 @@ src/
 
 ---
 
+# 🔧 다음 프로젝트에서 개선하고 싶은 점
+
+이번 프로젝트를 마무리하면서 단순히 모델 성능을 더 높이는 것보다, **데이터·실험·프로젝트 구조를 처음부터 더 체계적으로 설계하는 것**이 중요하다고 느꼈습니다.
+
+| 개선 방향 | 다음 프로젝트에서 해보고 싶은 것 |
+|---|---|
+| **Popularity / Novelty 균형** | 정확도만 높이는 것이 아니라, 인기 게임에 과도하게 쏠리지 않도록 **Relevance + Novelty + Diversity + Popularity Bias**를 함께 고려하는 Ranking / Reranking 실험 |
+| **데이터 전처리 / Item Universe 정합성** | metadata에는 있는데 BPR에는 없거나, 한 모델에는 있고 다른 모델에는 없는 식의 누락을 줄이기 위해 **ID 통일, Missing / Duplicate 검사, 모델별 Item Universe 비교, Data Integrity Test**를 모델링 전에 수행 |
+| **실험 파일 / 폴더 구조 정리** | 이번처럼 experiment script가 많아지고 이름이 복잡해지지 않도록, 처음부터 **baseline / candidate search / ranker search / ablation / stability / final evaluation** 단위로 폴더와 파일명을 설계 |
+| **실험 사전 설계** | 구현부터 시작하기보다 먼저 **Research Question → Baseline → 변수 → Grid 범위 → Optuna Search Space → Primary Metric → Guardrail → Final Validation Protocol**을 정한 뒤 실험 |
+| **Database 기반 추천시스템** | CSV / Parquet / Pandas DataFrame 중심에서 더 나아가 **Users / Items / Interactions / Recommendations를 DB에 저장하고 SQL로 조회하는 구조**를 직접 구현 |
+| **Web / Cloud 배포** | 추천 모델을 로컬 Python 코드에서 끝내지 않고 **Backend API + Web UI + Cloud Deployment**까지 연결해 실제 사용 가능한 형태로 배포 |
+
+특히 다음 프로젝트에서는 실험을 시작하기 전에 대략적인 Search Space를 먼저 정하고:
+
+```text
+Small Grid / Sweep
+        ↓
+Search Space 결정
+        ↓
+Optuna
+        ↓
+Top Candidate 재검증
+        ↓
+Ablation / Stability
+        ↓
+Final Test
+```
+
+처럼 **실험 전체 흐름을 먼저 설계한 뒤 구현**하는 방식을 적용해보고 싶습니다.
+
+또한 데이터 측면에서는:
+
+```text
+Raw Data
+    ↓
+ID / Type 정리
+    ↓
+Missing / Duplicate 검사
+    ↓
+Model별 Item Universe 비교
+    ↓
+Train / Validation / Test 고정
+    ↓
+Data Integrity Test
+    ↓
+Modeling
+```
+
+순서로 진행해, 프로젝트 중간에 item이 특정 모델에서만 빠지는 문제를 최대한 방지하고 싶습니다.
+
+---
+
 # 🗺 Roadmap
 
 ## ✅ Completed
