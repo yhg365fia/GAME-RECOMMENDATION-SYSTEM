@@ -24,7 +24,7 @@ Steam 게임 데이터를 활용해 **Content-Based / Collaborative Filtering / 
 | Final Ranker | **XGBoost `rank:ndcg`** |
 | 최종 NDCG@10 | **0.139857** |
 | 최종 MAP@10 | **0.069833** |
-| 프로젝트 상태 | **실험 종료 / 최종 문서화 단계** |
+| 프로젝트 상태 | **완료** |
 
 ### Final Recommendation Architecture
 
@@ -871,10 +871,6 @@ GAME-RECOMMENDATION-SYSTEM/
 │   ├── bpr.py
 │   ├── hybrid.py
 │   │
-│   ├── run_model/
-│   │   ├── run_bpr.py
-│   │   └── runsvd.py
-│   │
 │   └── saved_model/                 # Git 제외
 │       ├── bpr_grid/
 │       ├── ltr_cache/
@@ -905,7 +901,7 @@ GAME-RECOMMENDATION-SYSTEM/
 │   ├── Day25.md
 │   ├── Day26.md
 │   ├── Day27.md
-│   └── Experiment_Summary.md
+│   └── experiment_summary.md
 │
 ├── notebook/
 │
@@ -917,7 +913,7 @@ GAME-RECOMMENDATION-SYSTEM/
         └── mf_test.parquet
 ```
 
-> 현재 Git에는 Day01~Day25와 기존 experiment scripts가 먼저 올라가 있으며, 최종 commit에서 Day26 / Day27 / Experiment Summary / Final Runtime·Evaluation 파일을 함께 반영하는 구조를 기준으로 문서화했습니다.
+> 현재 Git에는 Final Runtime / Quantitative / Qualitative 실행 파일과 Day26 / Day27 / Experiment Summary까지 반영되어 있습니다.
 
 ---
 
@@ -1071,10 +1067,7 @@ Novelty   = 10.354832
 Hits      = 385
 
 Project Status
-Model / Architecture Experiments Complete
-→ Documentation
-→ Git Final Cleanup
-→ Project Close
+Completed
 ```
 
 ---
