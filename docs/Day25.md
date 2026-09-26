@@ -62,6 +62,8 @@ BPR의 핵심 hyperparameter(factors/regularization/iterations)에 대해 총 **
 
 **최종 1위**: factors=60, regularization=0.006, iterations=15 — BPR Candidate Recall 0.183040, UNION Candidate Recall 0.248277, Item Scoreable Recall 0.205562, Precision@10 0.086599, Recall@10 0.109385, HR@10 0.522500, NDCG@10 0.120657, Hits 345.
 
+> **재현성 메모:** 위 Retriever Ratio 표의 `56/39/5` 결과(P@10 0.08722, Hits 348)와 이 Grid Search의 동일 nominal BPR 설정 결과(P@10 0.086599, Hits 345)는 **서로 다른 실험 실행에서 기록된 값**이다. 같은 하이퍼파라미터명만으로 재학습 상태·캐시·실행 조건까지 완전히 동일했다고 확인할 근거는 없으므로 하나의 수치로 강제 통일하지 않고 각 실험 결과를 그대로 보존한다. 프로젝트의 최종 공식 성능은 Day27의 Final400 결과를 기준으로 한다.
+
 ```python
 factors = 60
 regularization = 0.006
